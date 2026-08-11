@@ -177,6 +177,7 @@ const settings = { lamp:45, sea:26, fx:70, swell:true };
 let pieces = [];          // { type, color, f, r, grp }
 let journal = [];         // lignes de texte
 let history = [];         // pile d'annulation
+let moveNo = 1, lastColor = null, startFen = null;
 let plyCount = 0;
 let dirtyExport = false;
 
@@ -604,15 +605,41 @@ function squarePos(f, r){ return { x: f - 3.5, z: 3.5 - r }; }
 function commitMove(pc, f, r){
   const q = squarePos(f, r);
   if (pc.f === f && pc.r === r){ pc.grp.position.set(q.x, 0, q.z); return false; }
+
+  if (startFen === null) startFen = fen();   // position de depart, figee au premier coup
+  let notation = san(pc, f, r);
+  const snap = { mn: moveNo, lc: lastColor };
+
+  // Un roque n'est un roque que si la tour est la : sinon c'est un simple coup de roi.
+  let rookMove = null;
+  if (notation === 'O-O' || notation === 'O-O-O'){
+    const rf = notation === 'O-O' ? 7 : 0;
+    const rk = pieceAt(rf, pc.r);
+    if (rk && rk.type === 'r' && rk.color === pc.color){
+      rookMove = { pc: rk, from: { f: rf, r: pc.r }, to: { f: notation === 'O-O' ? 5 : 3, r: pc.r } };
+    } else {
+      notation = 'K' + sqName(f, r);
+    }
+  }
+
   const occ = pieceAt(f, r);
   const cap = occ && occ !== pc ? { t: occ.type, c: occ.color, f: f, r: r } : null;
   if (cap) removePiece(occ);
   const from = { f: pc.f, r: pc.r };
   pc.f = f; pc.r = r;
   pc.grp.position.set(q.x, 0, q.z);
+
+  if (rookMove){                       // la tour suit le roi d'elle-meme
+    const rq = squarePos(rookMove.to.f, rookMove.to.r);
+    rookMove.pc.f = rookMove.to.f; rookMove.pc.r = rookMove.to.r;
+    rookMove.pc.grp.position.set(rq.x, 0, rq.z);
+  }
+
   feltDrop();
-  logMove(pc, from, { f: f, r: r }, !!cap);
-  history.push({ k:'move', from: from, to:{ f: f, r: r }, cap: cap });
+  logMove(pc, notation);
+  history.push({ k:'move', from: from, to:{ f: f, r: r }, cap: cap,
+                 rook: rookMove ? { from: rookMove.from, to: rookMove.to } : null,
+                 mn: snap.mn, lc: snap.lc });
   shadowsDirty(); persist();
   return true;
 }
@@ -842,13 +869,72 @@ cv.addEventListener('touchend', () => { pinch = null; }, { passive: true });
    JOURNAL ET FEN
    ====================================================================== */
 const FILES = 'abcdefgh';
+const STD_PLACEMENT = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
 function sqName(f, r){ return FILES[f] + (r + 1); }
 
-function logMove(piece, from, to, captured){
-  const letter = piece.color === 'w' ? piece.type.toUpperCase() : piece.type;
-  const txt = letter + sqName(from.f, from.r) + (captured ? 'x' : '-') + sqName(to.f, to.r);
+function boardMap(){
+  const m = {};
+  pieces.forEach(o => { m[o.f + ',' + o.r] = o; });
+  return m;
+}
+function pathClear(pc, df, dr, map){
+  const sf = Math.sign(df), sr = Math.sign(dr);
+  const n = Math.max(Math.abs(df), Math.abs(dr));
+  for (let i = 1; i < n; i++) if (map[(pc.f + sf * i) + ',' + (pc.r + sr * i)]) return false;
+  return true;
+}
+// Une piece peut-elle atteindre cette case ? Sert uniquement a lever les
+// ambiguites du type "lequel des deux cavaliers".
+function reaches(pc, tf, tr, map){
+  const df = tf - pc.f, dr = tr - pc.r;
+  const af = Math.abs(df), ar = Math.abs(dr);
+  if (!af && !ar) return false;
+  if (pc.type === 'n') return (af === 1 && ar === 2) || (af === 2 && ar === 1);
+  if (pc.type === 'k') return af <= 1 && ar <= 1;
+  if (pc.type === 'b') return af === ar && pathClear(pc, df, dr, map);
+  if (pc.type === 'r') return (!af || !ar) && pathClear(pc, df, dr, map);
+  if (pc.type === 'q') return (af === ar || !af || !ar) && pathClear(pc, df, dr, map);
+  if (pc.type === 'p'){
+    const dir = pc.color === 'w' ? 1 : -1;
+    if (!af){
+      if (map[tf + ',' + tr]) return false;
+      if (dr === dir) return true;
+      return dr === 2 * dir && pc.r === (pc.color === 'w' ? 1 : 6) && !map[pc.f + ',' + (pc.r + dir)];
+    }
+    return af === 1 && dr === dir;
+  }
+  return false;
+}
+function san(pc, tf, tr){
+  const map = boardMap();
+  const capture = !!map[tf + ',' + tr] || (pc.type === 'p' && tf !== pc.f);
+  if (pc.type === 'k' && tr === pc.r && Math.abs(tf - pc.f) === 2)
+    return tf > pc.f ? 'O-O' : 'O-O-O';
+  if (pc.type === 'p')
+    return (capture ? FILES[pc.f] + 'x' : '') + sqName(tf, tr);
+  const rivals = pieces.filter(o =>
+    o !== pc && o.type === pc.type && o.color === pc.color && reaches(o, tf, tr, map));
+  let dis = '';
+  if (rivals.length){
+    if (!rivals.some(o => o.f === pc.f)) dis = FILES[pc.f];
+    else if (!rivals.some(o => o.r === pc.r)) dis = String(pc.r + 1);
+    else dis = sqName(pc.f, pc.r);
+  }
+  return pc.type.toUpperCase() + dis + (capture ? 'x' : '') + sqName(tf, tr);
+}
+
+function logMove(pc, notation){
+  if (pc.color === 'w'){
+    if (lastColor !== null) moveNo++;
+    journal.push(moveNo + '. ' + notation);
+  } else if (lastColor === 'w'){
+    journal.push(notation);
+  } else {
+    if (lastColor !== null) moveNo++;
+    journal.push(moveNo + '... ' + notation);   // les noirs reprennent la main
+  }
+  lastColor = pc.color;
   plyCount++;
-  journal.push((plyCount % 2 === 1 ? Math.ceil(plyCount / 2) + '. ' : '') + txt);
   dirtyExport = true;
 }
 function logEdit(txt){
@@ -868,7 +954,16 @@ function undo(){
       const q = squarePos(p.f, p.r);
       p.grp.position.set(q.x, 0, q.z);
     }
+    if (h.rook){
+      const rk = pieceAt(h.rook.to.f, h.rook.to.r);
+      if (rk){
+        rk.f = h.rook.from.f; rk.r = h.rook.from.r;
+        const rq = squarePos(rk.f, rk.r);
+        rk.grp.position.set(rq.x, 0, rq.z);
+      }
+    }
     if (h.cap) addPiece(h.cap.t, h.cap.c, h.cap.f, h.cap.r);
+    if (h.mn !== undefined){ moveNo = h.mn; lastColor = h.lc; }
     plyCount = Math.max(0, plyCount - 1);
   } else if (h.k === 'add'){
     const p = pieceAt(h.at.f, h.at.r); if (p) removePiece(p);
@@ -902,9 +997,12 @@ function fen(){
 function journalText(){
   const d = new Date();
   const date = d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
-  return '[Event "Partie libre"]\n[Date "' + date + '"]\n[SetUp "1"]\n[FEN "' + fen() + '"]\n' +
-         '[Annotation "Notation longue, plateau a manipulation libre"]\n\n' +
-         (journal.length ? journal.join(' ') : '(aucun coup)') + '\n';
+  const start = startFen || fen();
+  const custom = start.split(' ')[0] !== STD_PLACEMENT;
+  return '[Event "Partie libre"]\n[Site "?"]\n[Date "' + date + '"]\n[Round "-"]\n' +
+         '[White "?"]\n[Black "?"]\n[Result "*"]\n' +
+         (custom ? '[SetUp "1"]\n[FEN "' + start + '"]\n' : '') + '\n' +
+         (journal.length ? journal.join(' ') + ' *' : '*') + '\n';
 }
 
 async function copy(text, label){
@@ -1105,7 +1203,7 @@ function persist(){
     store.set('chess:settings', settings);
     store.set('chess:state', {
       pieces: pieces.map(p => ({ t: p.type, c: p.color, f: p.f, r: p.r })),
-      journal, history, plyCount, dirtyExport
+      journal, history, plyCount, dirtyExport, moveNo, lastColor, startFen
     });
   }, 260);
 }
@@ -1122,6 +1220,9 @@ async function restore(){
     st.pieces.forEach(p => addPiece(p.t, p.c, p.f, p.r));
     journal = st.journal || [];
     history = st.history || [];
+    moveNo = st.moveNo || 1;
+    lastColor = st.lastColor === undefined ? null : st.lastColor;
+    startFen = st.startFen || null;
     plyCount = st.plyCount || 0;
     dirtyExport = !!st.dirtyExport;
     if (dirtyExport && journal.length)
@@ -1171,6 +1272,7 @@ function newGame(){
   deselect();
   standardSetup();
   journal = []; history = []; plyCount = 0; dirtyExport = false;
+  moveNo = 1; lastColor = null; startFen = fen();
   banner(false);
   shadowsDirty(); persist(); feltDrop();
 }
