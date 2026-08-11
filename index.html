@@ -1,0 +1,1171 @@
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Échiquier</title>
+<style>
+  :root{
+    --night:#070C13;
+    --deep:#0E1722;
+    --moon:#93B4CC;
+    --lantern:#F0A63C;
+    --bone:#EBE0CE;
+    --dim:#7A8A98;
+    --line:#1E2C3A;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overflow:hidden;background:var(--night)}
+  body{
+    color:var(--bone);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    touch-action:none; -webkit-user-select:none; user-select:none;
+  }
+  canvas{display:block;width:100%;height:100%}
+
+  #fallback{
+    position:fixed;inset:0;display:none;place-items:center;padding:32px;
+    text-align:center;color:var(--dim);font-size:15px;line-height:1.6;
+  }
+
+  /* ---------- barre principale ---------- */
+  .bar{
+    position:fixed;left:0;right:0;bottom:0;z-index:10;
+    padding:14px 16px calc(12px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg,rgba(7,12,19,0) 0%,rgba(7,12,19,.82) 42%,rgba(7,12,19,.96) 100%);
+  }
+  .topbar{
+    position:fixed;left:0;right:0;top:0;z-index:12;
+    padding:calc(9px + env(safe-area-inset-top)) 16px 16px;
+    background:linear-gradient(180deg,rgba(7,12,19,.95) 0%,rgba(7,12,19,.74) 52%,rgba(7,12,19,0) 100%);
+  }
+  .lamp{display:flex;align-items:center;gap:12px}
+  .lamp b{
+    font:400 11px/1 Georgia,serif;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--dim);white-space:nowrap;
+  }
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;flex:1;height:26px;background:transparent;margin:0;
+  }
+  input[type=range]::-webkit-slider-runnable-track{height:2px;background:#25384A}
+  input[type=range]::-moz-range-track{height:2px;background:#25384A}
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:20px;height:20px;border-radius:50%;
+    background:var(--lantern);margin-top:-9px;border:none;
+    box-shadow:0 0 12px rgba(240,166,60,.55);
+  }
+  input[type=range]::-moz-range-thumb{
+    width:20px;height:20px;border-radius:50%;background:var(--lantern);border:none;
+  }
+  .acts{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+  button{
+    font:inherit;font-size:13px;color:var(--bone);cursor:pointer;
+    background:rgba(30,44,58,.72);border:1px solid var(--line);border-radius:4px;
+    padding:11px 4px;transition:background .14s;
+  }
+  button:active{background:rgba(48,68,88,.9)}
+  button:focus-visible{outline:2px solid var(--lantern);outline-offset:2px}
+
+  /* ---------- panneaux ---------- */
+  .sheet{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    max-height:82vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    background:#0C141E;border-top:1px solid var(--line);
+    border-radius:14px 14px 0 0;
+    padding:20px 18px calc(24px + env(safe-area-inset-bottom));
+    transform:translateY(101%);transition:transform .26s cubic-bezier(.3,.8,.4,1);
+  }
+  .sheet.open{transform:none}
+  .veil{
+    position:fixed;inset:0;z-index:19;background:rgba(4,7,11,.55);
+    opacity:0;pointer-events:none;transition:opacity .26s;
+  }
+  .veil.open{opacity:1;pointer-events:auto}
+  .sheet h2{
+    font:400 20px/1.2 Georgia,"Times New Roman",serif;margin:0 0 3px;
+  }
+  .sheet .note{color:var(--dim);font-size:13px;margin:0 0 20px}
+  .grp{
+    font:400 11px/1 Georgia,serif;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--dim);margin:22px 0 10px;padding-bottom:7px;border-bottom:1px solid var(--line);
+  }
+  .grp:first-of-type{margin-top:0}
+  .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .g2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .on{background:rgba(240,166,60,.16);border-color:var(--lantern);color:#FFD9A0}
+  .danger{color:#E08A7A}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:14px 0 4px}
+  .row span{font-size:14px;white-space:nowrap}
+  .val{color:var(--lantern);font-variant-numeric:tabular-nums;font-size:13px}
+  .check{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:14px;margin:18px 0 4px}
+  .check input{accent-color:var(--lantern);width:18px;height:18px}
+  .wide{width:100%;margin-top:9px}
+  .log{
+    font:13px/1.75 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:#B9C9D6;background:#08101A;border:1px solid var(--line);border-radius:4px;
+    padding:12px 13px;max-height:34vh;overflow-y:auto;white-space:pre-wrap;word-break:break-all;
+  }
+  .empty{color:#4E5E6C;font-style:italic}
+
+  /* ---------- bannière ---------- */
+  .banner{
+    position:fixed;left:12px;right:12px;top:calc(66px + env(safe-area-inset-top));z-index:15;
+    display:none;align-items:center;gap:12px;
+    background:rgba(14,23,34,.95);border:1px solid var(--line);border-radius:5px;
+    padding:11px 13px;font-size:13.5px;
+  }
+  .banner.show{display:flex}
+  .banner span{flex:1;color:var(--dim)}
+  .banner button{padding:7px 12px;font-size:13px}
+
+  .toast{
+    position:fixed;left:50%;bottom:calc(150px + env(safe-area-inset-bottom));
+    transform:translateX(-50%) translateY(8px);z-index:30;
+    background:rgba(14,23,34,.96);border:1px solid var(--line);border-radius:4px;
+    padding:10px 16px;font-size:13.5px;color:var(--bone);
+    opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<canvas id="cv"></canvas>
+<div id="fallback">La bibliothèque 3D n'a pas pu être chargée.<br>Vérifie ta connexion et recharge la page.</div>
+
+<div class="banner" id="banner">
+  <span id="bannerTxt"></span>
+  <button id="bannerGo">Exporter</button>
+  <button id="bannerNo">Plus tard</button>
+</div>
+
+<div class="topbar">
+  <div class="lamp">
+    <b>Lanterne</b>
+    <input type="range" id="lampSlider" min="8" max="100" value="45">
+  </div>
+</div>
+
+<div class="bar">
+  <div class="acts">
+    <button id="bUndo">Annuler</button>
+    <button id="bTurn">Tourner</button>
+    <button id="bLog">Journal</button>
+    <button id="bSet">Réglages</button>
+  </div>
+</div>
+
+<div class="veil" id="veil"></div>
+<div class="sheet" id="sheet"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+if (typeof THREE === 'undefined') {
+  document.getElementById('fallback').style.display = 'grid';
+} else {
+buildApp();
+}
+
+function buildApp(){
+'use strict';
+
+/* ======================================================================
+   ÉTAT
+   ====================================================================== */
+const NAMES = { k:'Roi', q:'Dame', r:'Tour', b:'Fou', n:'Cavalier', p:'Pion' };
+const ORDER = ['k','q','r','b','n','p'];
+
+const settings = { lamp:45, sea:26, fx:70, swell:true };
+let pieces = [];          // { type, color, f, r, grp }
+let journal = [];         // lignes de texte
+let history = [];         // pile d'annulation
+let plyCount = 0;
+let dirtyExport = false;
+
+const store = {
+  async get(k){
+    try { const r = await window.storage.get(k); return r ? JSON.parse(r.value) : null; }
+    catch(e){ return null; }
+  },
+  async set(k, v){
+    try { await window.storage.set(k, JSON.stringify(v)); } catch(e){}
+  }
+};
+
+/* ======================================================================
+   SON  (repris du banc d'essai validé)
+   ====================================================================== */
+let ctx, master, seaBus, fxBus, swellBus, noiseBuf;
+let seaOn = false, crackleTimer = null, swellTimer = null, swellAmt = .5;
+
+function boot(){
+  if (ctx){ if (ctx.state === 'suspended') ctx.resume(); return; }
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -12; comp.ratio.value = 4; comp.attack.value = .003;
+  master = ctx.createGain(); master.gain.value = .9;
+  master.connect(comp); comp.connect(ctx.destination);
+  seaBus = ctx.createGain(); seaBus.gain.value = settings.sea / 100;
+  fxBus  = ctx.createGain(); fxBus.gain.value  = settings.fx / 100;
+  seaBus.connect(master); fxBus.connect(master);
+
+  const len = ctx.sampleRate * 4;
+  noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < len; i++){
+    const w = Math.random() * 2 - 1;
+    last = (last + .02 * w) / 1.02;
+    d[i] = last * 3.4;
+  }
+}
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+function burst(dest, o){
+  const t = ctx.currentTime + (o.delay || 0);
+  const s = ctx.createBufferSource();
+  s.buffer = noiseBuf; s.playbackRate.value = rnd(.9, 1.1);
+  const f = ctx.createBiquadFilter();
+  f.type = o.type || 'bandpass'; f.frequency.value = o.freq; f.Q.value = o.q || 1;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(.0002, o.gain), t + .0025);
+  g.gain.exponentialRampToValueAtTime(.0001, t + o.dur);
+  s.connect(f); f.connect(g); g.connect(dest);
+  s.start(t, Math.random() * 3); s.stop(t + o.dur + .05);
+}
+function mode(dest, o){
+  const t = ctx.currentTime + (o.delay || 0);
+  const osc = ctx.createOscillator();
+  osc.type = 'sine'; osc.frequency.value = o.freq;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(.0002, o.gain), t + .002);
+  g.gain.exponentialRampToValueAtTime(.0001, t + o.dur);
+  osc.connect(g); g.connect(dest);
+  osc.start(t); osc.stop(t + o.dur + .05);
+}
+
+let seaNodes = [];
+function startSea(){
+  if (seaOn) return;
+  boot(); seaOn = true;
+  swellBus = ctx.createGain(); swellBus.gain.value = .6; swellBus.connect(seaBus);
+  const mk = (type, freq, q, gain) => {
+    const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+    const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = ctx.createGain(); g.gain.value = gain;
+    s.connect(f); f.connect(g); g.connect(swellBus);
+    s.start(Math.random() * 3); seaNodes.push(s);
+    return { f, g };
+  };
+  const bed  = mk('bandpass', 760, .55, .22);
+  const hiss = mk('bandpass', 3400, .5, .055);
+  const lfo = (rate, depth, target) => {
+    const o = ctx.createOscillator(); o.frequency.value = rate;
+    const g = ctx.createGain(); g.gain.value = depth;
+    o.connect(g); g.connect(target); o.start(); seaNodes.push(o);
+  };
+  lfo(.11, 120, bed.f.frequency);
+  lfo(.29, .07, bed.g.gain);
+  lfo(.17, .018, hiss.g.gain);
+
+  // la vague : montée franche sur le premier tiers, retrait long sur le reste
+  let phase = .5, period = rnd(7.5, 12), t0 = performance.now();
+  swellTimer = setInterval(() => {
+    const now = performance.now(), dt = (now - t0) / 1000; t0 = now;
+    if (!settings.swell){
+      swellAmt = .5;
+      swellBus.gain.setTargetAtTime(.6, ctx.currentTime, .3);
+      bed.f.frequency.setTargetAtTime(760, ctx.currentTime, .3);
+      return;
+    }
+    phase += dt / period;
+    if (phase >= 1){ phase -= 1; period = rnd(7.5, 12); }
+    swellAmt = phase < .32
+      ? Math.pow(Math.sin(phase / .32 * Math.PI / 2), 1.1)
+      : Math.pow(Math.cos((phase - .32) / .68 * Math.PI / 2), 1.7);
+    swellBus.gain.setTargetAtTime(.22 + swellAmt * .95, ctx.currentTime, .12);
+    bed.f.frequency.setTargetAtTime(600 + swellAmt * 900, ctx.currentTime, .18);
+  }, 60);
+  crackle();
+}
+function crackle(){
+  if (!seaOn) return;
+  const k = .3 + swellAmt * 1.15, r = Math.random();
+  if (r < .04){
+    burst(seaBus, { freq: rnd(520,1000), q:1.6, dur: rnd(.04,.08), gain: rnd(.3,.55)*k });
+    burst(seaBus, { freq: 6000, q:.5, type:'highpass', dur:.012, gain:.3*k });
+  } else if (r < .26){
+    burst(seaBus, { freq: rnd(1900,3600), q:1.8, dur: rnd(.014,.035), gain: rnd(.16,.34)*k });
+  } else {
+    burst(seaBus, { freq: rnd(3600,8200), q:2.4, dur: rnd(.004,.014), gain: rnd(.08,.24)*k });
+    if (Math.random() < .35)
+      burst(seaBus, { freq: rnd(4200,9000), q:2.4, dur:.007, gain: rnd(.06,.18)*k, delay: rnd(.012,.05) });
+  }
+  crackleTimer = setTimeout(crackle, rnd(16,165) / (.4 + swellAmt * .9));
+}
+function stopSea(){
+  seaOn = false;
+  clearTimeout(crackleTimer); clearInterval(swellTimer); swellAmt = .5;
+  seaNodes.forEach(n => { try { n.stop(); } catch(e){} });
+  seaNodes = [];
+}
+
+function feltDrop(){
+  boot();
+  const p = rnd(.93, 1.08);
+  burst(fxBus, { freq: 950*p, q:.7, type:'lowpass', dur:.055, gain:.4 });
+  mode(fxBus, { freq: 108*p, dur:.1, gain:.26 });
+  mode(fxBus, { freq: 290*p, dur:.05, gain:.07 });
+}
+document.addEventListener('visibilitychange', () => {
+  if (!ctx) return;
+  if (document.hidden) ctx.suspend(); else ctx.resume();
+});
+
+/* ======================================================================
+   SCÈNE
+   ====================================================================== */
+const cv = document.getElementById('cv');
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, 1, .1, 400);
+
+// --- ciel nocturne peint à la main, réutilisé comme carte d'environnement
+function skyTexture(){
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 512;
+  const g = c.getContext('2d');
+  const grd = g.createLinearGradient(0, 0, 0, 512);
+  grd.addColorStop(0,   '#03060C');
+  grd.addColorStop(.34, '#081522');
+  grd.addColorStop(.49, '#173247');   // lueur d'horizon
+  grd.addColorStop(.52, '#0B1826');
+  grd.addColorStop(1,   '#050A10');
+  g.fillStyle = grd; g.fillRect(0, 0, 1024, 512);
+  // lune et son halo
+  const mx = 660, my = 150;
+  const halo = g.createRadialGradient(mx, my, 4, mx, my, 190);
+  halo.addColorStop(0, 'rgba(190,215,235,.55)');
+  halo.addColorStop(.16, 'rgba(130,170,205,.16)');
+  halo.addColorStop(1, 'rgba(120,160,200,0)');
+  g.fillStyle = halo; g.beginPath(); g.arc(mx, my, 190, 0, 7); g.fill();
+  g.fillStyle = '#E4EEF6'; g.beginPath(); g.arc(mx, my, 17, 0, 7); g.fill();
+  // quelques étoiles, discrètes
+  for (let i = 0; i < 190; i++){
+    const x = Math.random() * 1024, y = Math.random() * 210;
+    g.fillStyle = 'rgba(200,220,240,' + (Math.random() * .5 + .12) + ')';
+    g.fillRect(x, y, 1.4, 1.4);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.encoding = THREE.sRGBEncoding;
+  return t;
+}
+const sky = skyTexture();
+scene.background = sky;
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileEquirectangularShader();
+scene.environment = pmrem.fromEquirectangular(sky).texture;
+
+// --- lumières : chaud sur le plateau, froid au fond
+const lantern = new THREE.PointLight(0xffb877, 1, 26, 2);
+lantern.position.set(2.4, 5.4, 3.2);
+lantern.castShadow = true;
+lantern.shadow.mapSize.set(innerWidth < 500 ? 512 : 1024, innerWidth < 500 ? 512 : 1024);
+lantern.shadow.bias = -.0016;
+lantern.shadow.camera.near = .5;
+lantern.shadow.camera.far = 24;
+scene.add(lantern);
+
+const fill = new THREE.PointLight(0xff9d55, .18, 20, 2);
+fill.position.set(-3.4, 3.2, -2.6);
+scene.add(fill);
+
+const moon = new THREE.DirectionalLight(0x7aa6d8, .34);
+moon.position.set(-9, 8, -11);
+scene.add(moon);
+
+scene.add(new THREE.HemisphereLight(0x1b3348, 0x04070B, .45));
+
+// --- eau et terrasse
+const sea = new THREE.Mesh(
+  new THREE.PlaneGeometry(600, 600),
+  new THREE.MeshStandardMaterial({ color: 0x0A1622, roughness: .16, metalness: .78 })
+);
+sea.rotation.x = -Math.PI / 2;
+sea.position.y = -1.6;
+scene.add(sea);
+
+const deckMat = new THREE.MeshStandardMaterial({ color: 0x241A14, roughness: .82, metalness: .02 });
+const deck = new THREE.Mesh(new THREE.BoxGeometry(26, .5, 20), deckMat);
+deck.position.set(0, -.72, 2);
+deck.receiveShadow = true;
+scene.add(deck);
+
+/* ======================================================================
+   PLATEAU
+   ====================================================================== */
+const board = new THREE.Group();
+scene.add(board);
+
+const woodDark  = new THREE.MeshStandardMaterial({ color: 0x2E1D13, roughness: .55, metalness: .04 });
+const woodLight = new THREE.MeshStandardMaterial({ color: 0xC0A077, roughness: .5,  metalness: .04 });
+const frameMat  = new THREE.MeshStandardMaterial({ color: 0x1C120C, roughness: .42, metalness: .06 });
+
+const frame = new THREE.Mesh(new THREE.BoxGeometry(9.3, .42, 9.3), frameMat);
+frame.position.y = -.26;
+frame.receiveShadow = true; frame.castShadow = true;
+board.add(frame);
+
+const sqGeo = new THREE.BoxGeometry(1, .05, 1);
+for (let f = 0; f < 8; f++){
+  for (let r = 0; r < 8; r++){
+    const m = new THREE.Mesh(sqGeo, (f + r) % 2 === 0 ? woodDark : woodLight);
+    m.position.set(f - 3.5, -.025, 3.5 - r);
+    m.receiveShadow = true;
+    board.add(m);
+  }
+}
+
+// anneau de selection : la case choisie au premier appui
+const selRing = new THREE.Mesh(
+  new THREE.RingGeometry(.33, .45, 30),
+  new THREE.MeshBasicMaterial({ color: 0xF0A63C, transparent: true, opacity: .8,
+                                side: THREE.DoubleSide, depthWrite: false })
+);
+selRing.rotation.x = -Math.PI / 2;
+selRing.position.y = .014;
+selRing.visible = false;
+board.add(selRing);
+
+let selected = null;
+function select(pc){
+  selected = pc;
+  const q = squarePos(pc.f, pc.r);
+  selRing.position.set(q.x, .014, q.z);
+  selRing.visible = true;
+  needsRender = true;
+}
+function deselect(){
+  selected = null;
+  selRing.visible = false;
+  needsRender = true;
+}
+
+/* ======================================================================
+   PIÈCES
+   ====================================================================== */
+const matLight = new THREE.MeshStandardMaterial({ color: 0xE6D6B8, roughness: .38, metalness: .03 });
+const matDark  = new THREE.MeshStandardMaterial({ color: 0x211C1A, roughness: .34, metalness: .05 });
+const matFelt  = new THREE.MeshStandardMaterial({ color: 0x2A1418, roughness: .97, metalness: 0 });
+
+const FELT_H = .016;
+
+function lathe(pts){
+  const v = pts.map(p => new THREE.Vector2(p[0], p[1] + FELT_H));
+  const g = new THREE.LatheGeometry(v, 26);
+  g.computeVertexNormals();
+  return g;
+}
+
+const PROFILES = {
+  p: [[0,0],[.255,0],[.255,.035],[.23,.062],[.16,.10],[.125,.175],[.115,.30],[.155,.345],[.155,.375],
+      [.105,.40],[.09,.425],[.17,.47],[.185,.545],[.15,.61],[.075,.66],[0,.685]],
+  r: [[0,0],[.285,0],[.285,.04],[.255,.07],[.185,.13],[.17,.42],[.20,.47],[.20,.52],[.245,.565],
+      [.255,.60],[.255,.66],[0,.66]],
+  n: [[0,0],[.285,0],[.285,.04],[.255,.07],[.175,.13],[.155,.20],[0,.225]],
+  b: [[0,0],[.27,0],[.27,.04],[.24,.07],[.16,.13],[.125,.30],[.16,.36],[.185,.40],[.145,.44],
+      [.10,.47],[.155,.52],[.16,.56],[.115,.66],[.055,.76],[0,.80]],
+  q: [[0,0],[.305,0],[.305,.045],[.275,.08],[.19,.15],[.145,.36],[.175,.42],[.20,.46],[.15,.50],
+      [.13,.56],[.22,.66],[.245,.74],[.235,.78],[.18,.80],[0,.80]],
+  k: [[0,0],[.315,0],[.315,.045],[.285,.08],[.20,.15],[.15,.38],[.18,.44],[.21,.48],[.16,.52],
+      [.14,.58],[.225,.70],[.25,.78],[.20,.84],[0,.84]]
+};
+
+// tête de cavalier : silhouette extrudée, dans l'esprit des sets à venir
+function knightHead(){
+  const s = new THREE.Shape();
+  s.moveTo(-.15, -.28);
+  s.lineTo(.09, -.28);
+  s.quadraticCurveTo(.13, -.11, .23, -.02);
+  s.lineTo(.285, .055);
+  s.quadraticCurveTo(.31, .13, .245, .155);
+  s.lineTo(.095, .175);
+  s.quadraticCurveTo(.055, .25, .095, .29);
+  s.lineTo(.055, .385);
+  s.lineTo(-.005, .27);
+  s.quadraticCurveTo(-.10, .29, -.155, .15);
+  s.quadraticCurveTo(-.215, -.01, -.15, -.28);
+  const g = new THREE.ExtrudeGeometry(s, {
+    depth: .155, bevelEnabled: true, bevelSize: .016, bevelThickness: .016, bevelSegments: 2, curveSegments: 10
+  });
+  g.translate(0, 0, -.0775);
+  g.computeVertexNormals();
+  return g;
+}
+const knightGeo = knightHead();
+
+const geoCache = {};
+function bodyGeo(t){
+  if (!geoCache[t]) geoCache[t] = lathe(PROFILES[t]);
+  return geoCache[t];
+}
+const feltGeo = new THREE.CylinderGeometry(.25, .25, FELT_H, 22);
+const merlonGeo = new THREE.BoxGeometry(.10, .11, .075);
+const crownGeo = new THREE.SphereGeometry(.045, 10, 8);
+const orbGeo = new THREE.SphereGeometry(.055, 12, 10);
+const crossV = new THREE.BoxGeometry(.055, .21, .055);
+const crossH = new THREE.BoxGeometry(.165, .055, .055);
+
+function makePiece(type, color){
+  const mat = color === 'w' ? matLight : matDark;
+  const grp = new THREE.Group();
+
+  const felt = new THREE.Mesh(feltGeo, matFelt);
+  felt.position.y = FELT_H / 2;
+  grp.add(felt);
+
+  const body = new THREE.Mesh(bodyGeo(type), mat);
+  grp.add(body);
+
+  const extras = [];
+  if (type === 'r'){
+    for (let i = 0; i < 8; i++){
+      const a = i / 8 * Math.PI * 2;
+      const m = new THREE.Mesh(merlonGeo, mat);
+      m.position.set(Math.cos(a) * .205, .66 + FELT_H + .05, Math.sin(a) * .205);
+      m.rotation.y = -a;
+      extras.push(m);
+    }
+  } else if (type === 'n'){
+    const h = new THREE.Mesh(knightGeo, mat);
+    h.scale.setScalar(.95);
+    h.position.y = .225 + FELT_H + .265;
+    h.rotation.y = color === 'w' ? 0 : Math.PI;
+    extras.push(h);
+  } else if (type === 'b'){
+    const m = new THREE.Mesh(crownGeo, mat);
+    m.position.y = .80 + FELT_H + .04;
+    extras.push(m);
+  } else if (type === 'q'){
+    for (let i = 0; i < 9; i++){
+      const a = i / 9 * Math.PI * 2;
+      const m = new THREE.Mesh(crownGeo, mat);
+      m.position.set(Math.cos(a) * .205, .80 + FELT_H + .015, Math.sin(a) * .205);
+      extras.push(m);
+    }
+    const o = new THREE.Mesh(orbGeo, mat);
+    o.position.y = .80 + FELT_H + .06;
+    extras.push(o);
+  } else if (type === 'k'){
+    const a = new THREE.Mesh(crossV, mat);
+    a.position.y = .84 + FELT_H + .105;
+    const b = new THREE.Mesh(crossH, mat);
+    b.position.y = .84 + FELT_H + .145;
+    extras.push(a, b);
+  }
+  extras.forEach(m => grp.add(m));
+
+  grp.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  return grp;
+}
+
+function squarePos(f, r){ return { x: f - 3.5, z: 3.5 - r }; }
+
+// Deplacement effectif, quelle que soit la maniere dont il a ete demande.
+function commitMove(pc, f, r){
+  const q = squarePos(f, r);
+  if (pc.f === f && pc.r === r){ pc.grp.position.set(q.x, 0, q.z); return false; }
+  const occ = pieceAt(f, r);
+  const cap = occ && occ !== pc ? { t: occ.type, c: occ.color, f: f, r: r } : null;
+  if (cap) removePiece(occ);
+  const from = { f: pc.f, r: pc.r };
+  pc.f = f; pc.r = r;
+  pc.grp.position.set(q.x, 0, q.z);
+  feltDrop();
+  logMove(pc, from, { f: f, r: r }, !!cap);
+  history.push({ k:'move', from: from, to:{ f: f, r: r }, cap: cap });
+  shadowsDirty(); persist();
+  return true;
+}
+
+function addPiece(type, color, f, r){
+  const grp = makePiece(type, color);
+  const p = squarePos(f, r);
+  grp.position.set(p.x, 0, p.z);
+  scene.add(grp);
+  const obj = { type, color, f, r, grp };
+  grp.userData.piece = obj;
+  pieces.push(obj);
+  return obj;
+}
+function removePiece(obj){
+  if (selected === obj) deselect();
+  scene.remove(obj.grp);
+  pieces = pieces.filter(p => p !== obj);
+}
+function pieceAt(f, r){ return pieces.find(p => p.f === f && p.r === r); }
+
+function clearBoard(){
+  pieces.slice().forEach(removePiece);
+}
+function standardSetup(){
+  clearBoard();
+  const back = ['r','n','b','q','k','b','n','r'];
+  for (let f = 0; f < 8; f++){
+    addPiece(back[f], 'w', f, 0);
+    addPiece('p', 'w', f, 1);
+    addPiece('p', 'b', f, 6);
+    addPiece(back[f], 'b', f, 7);
+  }
+}
+
+/* ======================================================================
+   CAMÉRA ORBITALE
+   ====================================================================== */
+// quatre points de vue, un par cote du plateau, a hauteur constante
+const cam = { side: 0, theta: Math.PI / 2, phi: .78, dist: 15.5, target: new THREE.Vector3(0, 0, 0) };
+function applyCam(){
+  cam.dist = Math.max(7.5, Math.min(26, cam.dist));
+  camera.position.set(
+    cam.target.x + cam.dist * Math.sin(cam.phi) * Math.cos(cam.theta),
+    cam.target.y + cam.dist * Math.cos(cam.phi),
+    cam.target.z + cam.dist * Math.sin(cam.phi) * Math.sin(cam.theta)
+  );
+  camera.lookAt(cam.target);
+  needsRender = true;
+}
+
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  // sur écran étroit, on recule un peu pour que le plateau tienne en largeur
+  camera.fov = w / h < .72 ? 46 : 38;
+  camera.updateProjectionMatrix();
+  applyCam();
+}
+addEventListener('resize', resize);
+
+let turning = null;
+function turnTo(dir){
+  if (turning) return;
+  cam.side = (cam.side + dir + 4) % 4;
+  turning = { from: cam.theta, to: cam.theta + dir * Math.PI / 2, t0: performance.now() };
+  requestAnimationFrame(tick);
+}
+function quarterTurn(){ turnTo(1); }
+
+/* ======================================================================
+   INTERACTION
+   ====================================================================== */
+const ray = new THREE.Raycaster();
+const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const ndc = new THREE.Vector2();
+const hitPt = new THREE.Vector3();
+
+let mode2 = null;          // 'orbit' | 'drag'
+let dragged = null, dragMoved = 0, downXY = null, origin = null;
+let swipeDX = 0;
+let pinch = null;
+
+// l'edition ne s'ouvre qu'au double appui, pour ne plus la declencher par megarde
+let lastTap = { key: '', t: 0 };
+function isDoubleTap(key){
+  const now = performance.now();
+  if (lastTap.key === key && now - lastTap.t < 400){ lastTap = { key: '', t: 0 }; return true; }
+  lastTap = { key: key, t: now };
+  return false;
+}
+
+function toNdc(x, y){
+  ndc.x = (x / innerWidth) * 2 - 1;
+  ndc.y = -(y / innerHeight) * 2 + 1;
+}
+function groundPoint(x, y){
+  toNdc(x, y);
+  ray.setFromCamera(ndc, camera);
+  return ray.ray.intersectPlane(plane, hitPt) ? hitPt.clone() : null;
+}
+function pickPiece(x, y){
+  toNdc(x, y);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(pieces.map(p => p.grp), true);
+  if (!hits.length) return null;
+  let o = hits[0].object;
+  while (o && !o.userData.piece) o = o.parent;
+  return o ? o.userData.piece : null;
+}
+
+cv.addEventListener('pointerdown', e => {
+  if (ctx === undefined) boot();
+  if (!seaOn && settings.sea > 0) startSea();
+  cv.setPointerCapture(e.pointerId);
+  downXY = { x: e.clientX, y: e.clientY };
+  dragMoved = 0;
+  const p = pickPiece(e.clientX, e.clientY);
+  if (p){
+    mode2 = 'drag'; dragged = p;
+    origin = { f: p.f, r: p.r };
+    p.grp.position.y = .42;
+    needsRender = true;
+  } else {
+    mode2 = 'orbit';
+  }
+});
+
+cv.addEventListener('pointermove', e => {
+  if (!mode2 || !downXY) return;
+  const dx = e.clientX - downXY.x, dy = e.clientY - downXY.y;
+  dragMoved = Math.max(dragMoved, Math.abs(dx) + Math.abs(dy));
+  if (mode2 === 'orbit'){
+    swipeDX = dx;            // on mesure seulement : la vue saute d'un cote a l'autre
+  } else if (dragged){
+    const g = groundPoint(e.clientX, e.clientY);
+    if (g){
+      dragged.grp.position.x = Math.max(-4.6, Math.min(4.6, g.x));
+      dragged.grp.position.z = Math.max(-4.6, Math.min(4.6, g.z));
+      renderer.shadowMap.needsUpdate = true;   // l'ombre suit la pièce soulevée
+      needsRender = true;
+    }
+  }
+});
+
+function endPointer(e){
+  if (mode2 === 'drag' && dragged){
+    const g = dragged.grp;
+    const f = Math.round(g.position.x + 3.5);
+    const r = Math.round(3.5 - g.position.z);
+    const inside = f >= 0 && f < 8 && r >= 0 && r < 8;
+    if (dragMoved < 9){
+      const p = squarePos(dragged.f, dragged.r);
+      g.position.set(p.x, 0, p.z);
+      if (isDoubleTap('p' + dragged.f + ',' + dragged.r)){
+        deselect(); editPiece(dragged);
+      } else if (selected && selected !== dragged){
+        commitMove(selected, dragged.f, dragged.r); deselect();
+      } else if (selected === dragged){
+        deselect();
+      } else {
+        select(dragged);
+      }
+    } else if (!inside || (f === origin.f && r === origin.r)){
+      const p = squarePos(origin.f, origin.r);
+      g.position.set(p.x, 0, p.z);
+      feltDrop();
+    } else {
+      deselect();
+      commitMove(dragged, f, r);
+    }
+    shadowsDirty();
+  } else if (mode2 === 'orbit'){
+    if (Math.abs(swipeDX) > 45){
+      turnTo(swipeDX > 0 ? 1 : -1);          // on pousse le plateau, il tourne avec le doigt
+    } else if (dragMoved < 9 && downXY){
+      const g = groundPoint(downXY.x, downXY.y);
+      if (g){
+        const f = Math.round(g.x + 3.5), r = Math.round(3.5 - g.z);
+        if (f >= 0 && f < 8 && r >= 0 && r < 8){
+          if (selected){ commitMove(selected, f, r); deselect(); }
+          else if (!pieceAt(f, r) && isDoubleTap('s' + f + ',' + r)) addSheet(f, r);
+        }
+      }
+    }
+  }
+  swipeDX = 0;
+  mode2 = null; dragged = null; downXY = null;
+  needsRender = true;
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  cam.dist *= 1 + e.deltaY * .0012;
+  applyCam();
+}, { passive: false });
+
+cv.addEventListener('touchstart', e => {
+  if (e.touches.length === 2){
+    mode2 = null; swipeDX = 0;
+    if (dragged){                       // deux doigts : on repose la piece en cours
+      const q = squarePos(dragged.f, dragged.r);
+      dragged.grp.position.set(q.x, 0, q.z);
+      dragged = null;
+    }
+    const a = e.touches[0], b = e.touches[1];
+    pinch = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+}, { passive: true });
+
+cv.addEventListener('touchmove', e => {
+  if (e.touches.length === 2 && pinch){
+    const a = e.touches[0], b = e.touches[1];
+    const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    cam.dist *= pinch / Math.max(1, d);
+    pinch = d;
+    applyCam();
+  }
+}, { passive: true });
+
+cv.addEventListener('touchend', () => { pinch = null; }, { passive: true });
+
+/* ======================================================================
+   JOURNAL ET FEN
+   ====================================================================== */
+const FILES = 'abcdefgh';
+function sqName(f, r){ return FILES[f] + (r + 1); }
+
+function logMove(piece, from, to, captured){
+  const letter = piece.color === 'w' ? piece.type.toUpperCase() : piece.type;
+  const txt = letter + sqName(from.f, from.r) + (captured ? 'x' : '-') + sqName(to.f, to.r);
+  plyCount++;
+  journal.push((plyCount % 2 === 1 ? Math.ceil(plyCount / 2) + '. ' : '') + txt);
+  dirtyExport = true;
+}
+function logEdit(txt){
+  journal.push('{' + txt + '}');
+  dirtyExport = true;
+}
+
+// Annule la derniere action, quelle qu'elle soit, et la retire du journal
+// comme du FEN, puisque le FEN est recalcule depuis le plateau a chaque lecture.
+function undo(){
+  const h = history.pop();
+  if (!h){ toast('Rien à annuler'); return; }
+  if (h.k === 'move'){
+    const p = pieceAt(h.to.f, h.to.r);
+    if (p){
+      p.f = h.from.f; p.r = h.from.r;
+      const q = squarePos(p.f, p.r);
+      p.grp.position.set(q.x, 0, q.z);
+    }
+    if (h.cap) addPiece(h.cap.t, h.cap.c, h.cap.f, h.cap.r);
+    plyCount = Math.max(0, plyCount - 1);
+  } else if (h.k === 'add'){
+    const p = pieceAt(h.at.f, h.at.r); if (p) removePiece(p);
+  } else if (h.k === 'remove'){
+    addPiece(h.t, h.c, h.at.f, h.at.r);
+  } else if (h.k === 'swap'){
+    const p = pieceAt(h.at.f, h.at.r); if (p) removePiece(p);
+    addPiece(h.t, h.c, h.at.f, h.at.r);
+  }
+  journal.pop();
+  dirtyExport = journal.length > 0;
+  shadowsDirty(); persist(); feltDrop();
+}
+
+function fen(){
+  const grid = [];
+  for (let r = 7; r >= 0; r--){
+    let row = '', gap = 0;
+    for (let f = 0; f < 8; f++){
+      const p = pieceAt(f, r);
+      if (!p){ gap++; continue; }
+      if (gap){ row += gap; gap = 0; }
+      row += p.color === 'w' ? p.type.toUpperCase() : p.type;
+    }
+    if (gap) row += gap;
+    grid.push(row);
+  }
+  return grid.join('/') + ' w - - 0 1';
+}
+
+function journalText(){
+  const d = new Date();
+  const date = d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+  return '[Event "Partie libre"]\n[Date "' + date + '"]\n[SetUp "1"]\n[FEN "' + fen() + '"]\n' +
+         '[Annotation "Notation longue, plateau a manipulation libre"]\n\n' +
+         (journal.length ? journal.join(' ') : '(aucun coup)') + '\n';
+}
+
+async function copy(text, label){
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(label + ' copié');
+  } catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast(label + ' copié'); }
+    catch(e2){ toast('Copie impossible'); }
+    document.body.removeChild(ta);
+  }
+}
+async function shareJournal(){
+  const text = journalText();
+  if (navigator.share){
+    try {
+      await navigator.share({ title: 'Partie', text });
+      dirtyExport = false; persist();
+      return;
+    } catch(e){ if (e && e.name === 'AbortError') return; }
+  }
+  await copy(text, 'Journal');
+  dirtyExport = false; persist();
+}
+
+/* ======================================================================
+   PANNEAUX
+   ====================================================================== */
+const sheet = document.getElementById('sheet');
+const veil = document.getElementById('veil');
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+
+function toast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1900);
+}
+function openSheet(html){
+  sheet.innerHTML = html;
+  sheet.classList.add('open');
+  veil.classList.add('open');
+}
+function closeSheet(){
+  sheet.classList.remove('open');
+  veil.classList.remove('open');
+}
+veil.addEventListener('click', closeSheet);
+
+function editPiece(p){
+  const natures = ORDER.map(t =>
+    '<button data-t="' + t + '" class="' + (t === p.type ? 'on' : '') + '">' + NAMES[t] + '</button>').join('');
+  openSheet(
+    '<h2>' + NAMES[p.type] + ' en ' + sqName(p.f, p.r) + '</h2>' +
+    '<p class="note">Change sa nature ou son camp, ou retire-la du plateau.</p>' +
+    '<div class="grp">Nature</div><div class="g3" id="nat">' + natures + '</div>' +
+    '<div class="grp">Camp</div><div class="g2" id="col">' +
+      '<button data-c="w" class="' + (p.color === 'w' ? 'on' : '') + '">Clair</button>' +
+      '<button data-c="b" class="' + (p.color === 'b' ? 'on' : '') + '">Sombre</button>' +
+    '</div>' +
+    '<button class="wide danger" id="del">Retirer du plateau</button>' +
+    '<button class="wide" id="close">Fermer</button>'
+  );
+  sheet.querySelectorAll('#nat button').forEach(b => b.onclick = () => {
+    swap(p, b.dataset.t, p.color); closeSheet();
+  });
+  sheet.querySelectorAll('#col button').forEach(b => b.onclick = () => {
+    swap(p, p.type, b.dataset.c); closeSheet();
+  });
+  sheet.querySelector('#del').onclick = () => {
+    logEdit(NAMES[p.type] + ' retire de ' + sqName(p.f, p.r));
+    history.push({ k:'remove', t: p.type, c: p.color, at:{ f: p.f, r: p.r } });
+    removePiece(p); shadowsDirty(); persist(); closeSheet(); feltDrop();
+  };
+  sheet.querySelector('#close').onclick = closeSheet;
+}
+
+function swap(p, type, color){
+  if (type === p.type && color === p.color) return;
+  const f = p.f, r = p.r;
+  logEdit(NAMES[p.type] + ' en ' + sqName(f, r) + ' devient ' + NAMES[type] + ' ' + (color === 'w' ? 'clair' : 'sombre'));
+  history.push({ k:'swap', t: p.type, c: p.color, at:{ f: f, r: r } });
+  removePiece(p);
+  addPiece(type, color, f, r);
+  shadowsDirty(); persist(); feltDrop();
+}
+
+let addColor = 'w';
+function addSheet(f, r){
+  const natures = ORDER.map(t => '<button data-t="' + t + '">' + NAMES[t] + '</button>').join('');
+  openSheet(
+    '<h2>Case ' + sqName(f, r) + '</h2>' +
+    '<p class="note">Choisis le camp, puis la pièce à poser ici.</p>' +
+    '<div class="grp">Camp</div><div class="g2" id="col">' +
+      '<button data-c="w" class="' + (addColor === 'w' ? 'on' : '') + '">Clair</button>' +
+      '<button data-c="b" class="' + (addColor === 'b' ? 'on' : '') + '">Sombre</button>' +
+    '</div>' +
+    '<div class="grp">Pièce</div><div class="g3" id="nat">' + natures + '</div>' +
+    '<button class="wide" id="close">Fermer</button>'
+  );
+  sheet.querySelectorAll('#col button').forEach(b => b.onclick = () => {
+    addColor = b.dataset.c;
+    sheet.querySelectorAll('#col button').forEach(x => x.classList.toggle('on', x.dataset.c === addColor));
+  });
+  sheet.querySelectorAll('#nat button').forEach(b => b.onclick = () => {
+    addPiece(b.dataset.t, addColor, f, r);
+    history.push({ k:'add', at:{ f: f, r: r } });
+    logEdit(NAMES[b.dataset.t] + ' ' + (addColor === 'w' ? 'clair' : 'sombre') + ' pose en ' + sqName(f, r));
+    shadowsDirty(); persist(); feltDrop(); closeSheet();
+  });
+  sheet.querySelector('#close').onclick = closeSheet;
+}
+
+function settingsSheet(){
+  openSheet(
+    '<h2>Réglages</h2><p class="note">Tout est conservé d\'une session à l\'autre.</p>' +
+    '<div class="grp">Sons</div>' +
+    '<div class="row"><span>Mer</span><span class="val" id="vSea">' + settings.sea + '</span></div>' +
+    '<input type="range" id="sSea" min="0" max="100" value="' + settings.sea + '" style="width:100%">' +
+    '<div class="row"><span>Pièces</span><span class="val" id="vFx">' + settings.fx + '</span></div>' +
+    '<input type="range" id="sFx" min="0" max="100" value="' + settings.fx + '" style="width:100%">' +
+    '<label class="check"><input type="checkbox" id="cSwell"' + (settings.swell ? ' checked' : '') + '> Houle lente</label>' +
+    '<div class="grp">Vue</div>' +
+    '<button class="wide" id="reset">Revenir au côté clair et au cadrage d\'origine</button>' +
+    '<div class="grp">Partie</div>' +
+    '<button class="wide danger" id="newg">Nouvelle partie</button>' +
+    '<button class="wide" id="close">Fermer</button>'
+  );
+  const bindVol = (id, out, key, bus) => {
+    const el = sheet.querySelector('#' + id);
+    el.oninput = () => {
+      settings[key] = +el.value;
+      sheet.querySelector('#' + out).textContent = el.value;
+      if (ctx && bus()) bus().gain.setTargetAtTime(el.value / 100, ctx.currentTime, .05);
+      if (key === 'sea' && +el.value > 0 && !seaOn) startSea();
+      persist();
+    };
+  };
+  bindVol('sSea', 'vSea', 'sea', () => seaBus);
+  bindVol('sFx', 'vFx', 'fx', () => fxBus);
+  sheet.querySelector('#cSwell').onchange = e => { settings.swell = e.target.checked; persist(); };
+  sheet.querySelector('#reset').onclick = () => {
+    cam.side = 0; cam.theta = Math.PI / 2; cam.dist = 15.5; applyCam(); closeSheet();
+  };
+  sheet.querySelector('#newg').onclick = () => { closeSheet(); askNewGame(); };
+  sheet.querySelector('#close').onclick = closeSheet;
+}
+
+function logSheet(){
+  const body = journal.length
+    ? journal.join(' ')
+    : '<span class="empty">Aucun coup joué pour l\'instant.</span>';
+  openSheet(
+    '<h2>Journal</h2>' +
+    '<p class="note">Notation longue. Le journal repart à zéro à chaque nouvelle partie.</p>' +
+    '<div class="grp">Coups</div><div class="log">' + body + '</div>' +
+    '<div class="grp">Position actuelle</div><div class="log">' + fen() + '</div>' +
+    '<button class="wide" id="cpFen">Copier le FEN</button>' +
+    '<button class="wide" id="exp">Exporter le journal</button>' +
+    '<button class="wide" id="close">Fermer</button>'
+  );
+  sheet.querySelector('#cpFen').onclick = () => copy(fen(), 'FEN');
+  sheet.querySelector('#exp').onclick = () => { shareJournal(); banner(false); };
+  sheet.querySelector('#close').onclick = closeSheet;
+}
+
+/* ======================================================================
+   BANNIÈRE ET PERSISTANCE
+   ====================================================================== */
+const bannerEl = document.getElementById('banner');
+function banner(show, txt){
+  bannerEl.classList.toggle('show', !!show);
+  if (txt) document.getElementById('bannerTxt').textContent = txt;
+}
+document.getElementById('bannerGo').onclick = () => { shareJournal(); banner(false); };
+document.getElementById('bannerNo').onclick = () => banner(false);
+
+let saveTimer = null;
+function persist(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    store.set('chess:settings', settings);
+    store.set('chess:state', {
+      pieces: pieces.map(p => ({ t: p.type, c: p.color, f: p.f, r: p.r })),
+      journal, history, plyCount, dirtyExport
+    });
+  }, 260);
+}
+
+async function restore(){
+  const s = await store.get('chess:settings');
+  if (s) Object.assign(settings, s);
+  document.getElementById('lampSlider').value = settings.lamp;
+  applyLamp();
+
+  const st = await store.get('chess:state');
+  if (st && st.pieces && st.pieces.length){
+    clearBoard();
+    st.pieces.forEach(p => addPiece(p.t, p.c, p.f, p.r));
+    journal = st.journal || [];
+    history = st.history || [];
+    plyCount = st.plyCount || 0;
+    dirtyExport = !!st.dirtyExport;
+    if (dirtyExport && journal.length)
+      banner(true, 'Partie précédente non exportée');
+  } else {
+    standardSetup();
+  }
+  shadowsDirty();
+}
+
+/* ======================================================================
+   BOUTONS
+   ====================================================================== */
+function applyLamp(){
+  const v = settings.lamp / 100;
+  lantern.intensity = .12 + Math.pow(v, 1.5) * 3.4;
+  fill.intensity = .04 + v * .34;
+  moon.intensity = .40 - v * .13;   // plus la lanterne monte, moins la lune compte
+  renderer.toneMappingExposure = 1.14 - v * .16;
+  needsRender = true;
+}
+document.getElementById('lampSlider').oninput = e => {
+  settings.lamp = +e.target.value;
+  applyLamp(); persist();
+};
+document.getElementById('bTurn').onclick = quarterTurn;
+document.getElementById('bLog').onclick = logSheet;
+document.getElementById('bSet').onclick = settingsSheet;
+document.getElementById('bUndo').onclick = undo;
+function askNewGame(){
+  if (journal.length && dirtyExport){
+    openSheet(
+      '<h2>Nouvelle partie</h2>' +
+      '<p class="note">La partie en cours n\'a pas été exportée. Le journal sera effacé.</p>' +
+      '<button class="wide" id="expFirst">Exporter d\'abord</button>' +
+      '<button class="wide danger" id="go">Effacer et recommencer</button>' +
+      '<button class="wide" id="close">Annuler</button>'
+    );
+    sheet.querySelector('#expFirst').onclick = async () => { await shareJournal(); };
+    sheet.querySelector('#go').onclick = () => { newGame(); closeSheet(); };
+    sheet.querySelector('#close').onclick = closeSheet;
+  } else {
+    newGame();
+  }
+}
+function newGame(){
+  deselect();
+  standardSetup();
+  journal = []; history = []; plyCount = 0; dirtyExport = false;
+  banner(false);
+  shadowsDirty(); persist(); feltDrop();
+}
+
+/* ======================================================================
+   BOUCLE
+   ====================================================================== */
+let needsRender = true;
+function shadowsDirty(){ renderer.shadowMap.needsUpdate = true; needsRender = true; }
+
+function tick(now){
+  if (turning){
+    const k = Math.min(1, (now - turning.t0) / 520);
+    const e = k < .5 ? 4*k*k*k : 1 - Math.pow(-2*k + 2, 3) / 2;
+    cam.theta = turning.from + (turning.to - turning.from) * e;
+    applyCam();
+    if (k >= 1){ cam.theta = turning.to; turning = null; applyCam(); }
+  }
+  if (needsRender){
+    renderer.render(scene, camera);
+    needsRender = false;
+  }
+  requestAnimationFrame(tick);
+}
+
+resize();
+restore().then(() => { shadowsDirty(); });
+requestAnimationFrame(tick);
+}
+</script>
