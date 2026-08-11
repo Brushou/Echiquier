@@ -196,7 +196,23 @@ const store = {
 let ctx, master, seaBus, fxBus, swellBus, noiseBuf;
 let seaOn = false, crackleTimer = null, swellTimer = null, swellAmt = .5;
 
+// iOS coupe le son des pages web quand l'interrupteur de sourdine est actif.
+// Faire jouer un element audio silencieux en boucle bascule la session audio
+// en mode lecture, et le son de la page echappe alors a cet interrupteur.
+let silentEl = null;
+function unlockAudio(){
+  if (silentEl) return;
+  silentEl = document.createElement('audio');
+  silentEl.setAttribute('playsinline', '');
+  silentEl.loop = true;
+  silentEl.volume = .001;
+  silentEl.src = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+  const p = silentEl.play();
+  if (p && p.catch) p.catch(() => {});
+}
+
 function boot(){
+  unlockAudio();
   if (ctx){ if (ctx.state === 'suspended') ctx.resume(); return; }
   ctx = new (window.AudioContext || window.webkitAudioContext)();
   const comp = ctx.createDynamicsCompressor();
@@ -319,7 +335,11 @@ function feltDrop(){
 }
 document.addEventListener('visibilitychange', () => {
   if (!ctx) return;
-  if (document.hidden) ctx.suspend(); else ctx.resume();
+  if (document.hidden){ ctx.suspend(); }
+  else {
+    ctx.resume();
+    if (silentEl){ const p = silentEl.play(); if (p && p.catch) p.catch(() => {}); }
+  }
 });
 
 /* ======================================================================
@@ -706,7 +726,7 @@ function pickPiece(x, y){
 }
 
 cv.addEventListener('pointerdown', e => {
-  if (ctx === undefined) boot();
+  boot();
   if (!seaOn && settings.sea > 0) startSea();
   cv.setPointerCapture(e.pointerId);
   downXY = { x: e.clientX, y: e.clientY };
@@ -1010,6 +1030,7 @@ function settingsSheet(){
     '<input type="range" id="sSea" min="0" max="100" value="' + settings.sea + '" style="width:100%">' +
     '<div class="row"><span>Pièces</span><span class="val" id="vFx">' + settings.fx + '</span></div>' +
     '<input type="range" id="sFx" min="0" max="100" value="' + settings.fx + '" style="width:100%">' +
+    '<button class="wide" id="test">Tester le son</button>' +
     '<label class="check"><input type="checkbox" id="cSwell"' + (settings.swell ? ' checked' : '') + '> Houle lente</label>' +
     '<div class="grp">Vue</div>' +
     '<button class="wide" id="reset">Revenir au côté clair et au cadrage d\'origine</button>' +
@@ -1029,6 +1050,17 @@ function settingsSheet(){
   };
   bindVol('sSea', 'vSea', 'sea', () => seaBus);
   bindVol('sFx', 'vFx', 'fx', () => fxBus);
+  sheet.querySelector('#test').onclick = () => {
+    boot();
+    if (!seaOn && settings.sea > 0) startSea();
+    feltDrop();
+    setTimeout(() => {
+      if (!ctx) toast('Moteur audio indisponible');
+      else if (ctx.state !== 'running') toast('Son bloqué par le système');
+      else if (settings.fx === 0) toast('Volume des pièces à zéro');
+      else toast('Son actif — vérifie l\'interrupteur de sourdine');
+    }, 260);
+  };
   sheet.querySelector('#cSwell').onchange = e => { settings.swell = e.target.checked; persist(); };
   sheet.querySelector('#reset').onclick = () => {
     cam.side = 0; cam.theta = Math.PI / 2; cam.dist = 15.5; applyCam(); closeSheet();
