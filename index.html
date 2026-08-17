@@ -34,10 +34,24 @@
   }
   .topbar{
     position:fixed;left:0;right:0;top:0;z-index:12;
+    pointer-events:none;   /* le degrade ne doit pas voler les gestes du plateau */
     padding:calc(9px + env(safe-area-inset-top)) 16px 16px;
     background:linear-gradient(180deg,rgba(7,12,19,.95) 0%,rgba(7,12,19,.74) 52%,rgba(7,12,19,0) 100%);
   }
   .lamp{display:flex;align-items:center;gap:12px}
+  #lampSlider{pointer-events:auto}
+  /* ligne du jeu en ligne : volontairement effacee, on ne s'en sert que rarement */
+  /* deux maillons discrets, cales a droite sous la lanterne */
+  .netrow{display:flex;justify-content:flex-end;align-items:center;gap:4px;margin-top:8px}
+  .netrow button{
+    pointer-events:auto;
+    flex:0 0 auto;width:38px;height:32px;display:grid;place-items:center;
+    padding:0;background:none;border:0;color:var(--dim);
+    -webkit-tap-highlight-color:transparent;cursor:pointer;
+    transition:color .18s,transform .12s;
+  }
+  .netrow button svg{width:20px;height:20px;display:block}
+  .netrow button:active{color:#F0A63C;transform:scale(.86)}
   .lamp b{
     font:400 11px/1 Georgia,serif;letter-spacing:.16em;text-transform:uppercase;
     color:var(--dim);white-space:nowrap;
@@ -95,6 +109,12 @@
   .row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:14px 0 4px}
   .row span{font-size:14px;white-space:nowrap}
   .val{color:var(--lantern);font-variant-numeric:tabular-nums;font-size:13px}
+  .tm{display:flex;flex-direction:column;gap:6px;font:400 11px/1 Georgia,serif;
+      letter-spacing:.14em;text-transform:uppercase;color:var(--dim);text-align:center}
+  .tm input{font:inherit;font-size:18px;font-family:ui-monospace,Menlo,monospace;
+      color:var(--bone);background:#08101A;border:1px solid var(--line);border-radius:4px;
+      padding:11px 4px;text-align:center;width:100%;-moz-appearance:textfield}
+  .tm input::-webkit-outer-spin-button,.tm input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .check{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:14px;margin:18px 0 4px}
   .check input{accent-color:var(--lantern);width:18px;height:18px}
   .wide{width:100%;margin-top:9px}
@@ -141,6 +161,32 @@
     <b>Lanterne</b>
     <input type="range" id="lampSlider" min="8" max="100" value="45">
   </div>
+  <div class="netrow">
+    <button id="netPaste" title="Coller le lien reçu"
+            aria-label="Coller le lien reçu">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="5.2" y="4.4" width="13.6" height="16.2" rx="2.4"
+              fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <path d="M9.4 4.4V3.5a1.5 1.5 0 0 1 1.5-1.5h2.2a1.5 1.5 0 0 1 1.5 1.5v.9z"
+              fill="currentColor"/>
+        <path d="M9.4 4.4h5.2" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round"/>
+        <path d="M8.9 11.2h6.2M8.9 14.8h4.2" fill="none" stroke="currentColor"
+              stroke-width="1.7" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <button id="netCopy" title="Copier le lien de ma position"
+            aria-label="Copier le lien de ma position">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9.6 14.4a3.4 3.4 0 0 0 4.8 0l3.9-3.9a3.4 3.4 0 0 0-4.8-4.8l-1.6 1.6"
+              fill="none" stroke="currentColor" stroke-width="2.1"
+              stroke-linecap="round"/>
+        <path d="M14.4 9.6a3.4 3.4 0 0 0-4.8 0l-3.9 3.9a3.4 3.4 0 0 0 4.8 4.8l1.6-1.6"
+              fill="none" stroke="currentColor" stroke-width="2.1"
+              stroke-linecap="round"/>
+      </svg>
+    </button>
+  </div>
 </div>
 
 <div class="bar">
@@ -173,7 +219,9 @@ function buildApp(){
 const NAMES = { k:'Roi', q:'Dame', r:'Tour', b:'Fou', n:'Cavalier', p:'Pion' };
 const ORDER = ['k','q','r','b','n','p'];
 
-const settings = { lamp:45, sea:26, fx:70, swell:true };
+const settings = { lamp:45, sea:26, fx:70, swell:true, side:'w', clock:{ h:0, m:10, s:0 } };
+let mySide = 'w';                 // le camp du joueur assis pres de la camera
+const other = c => c === 'w' ? 'b' : 'w';
 let pieces = [];          // { type, color, f, r, grp }
 let journal = [];         // lignes de texte
 let history = [];         // pile d'annulation
@@ -334,7 +382,36 @@ function feltDrop(){
   mode(fxBus, { freq: 108*p, dur:.1, gain:.26 });
   mode(fxBus, { freq: 290*p, dur:.05, gain:.07 });
 }
+// iOS gele les pages en arriere-plan : on suspend le decompte plutot que de
+// laisser le temps filer a l'insu des joueurs, et on reprend au retour.
+let clockWasRunning = null;
+// Frottement d'une piece poussee hors de sa case.
+function slideSound(){
+  boot();
+  const t = ctx.currentTime, dur = rnd(.15, .22);
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuf; src.playbackRate.value = rnd(.85, 1.15);
+  const f = ctx.createBiquadFilter();
+  f.type = 'bandpass'; f.Q.value = 1.6;
+  f.frequency.setValueAtTime(900, t);
+  f.frequency.linearRampToValueAtTime(1600, t + dur);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(.0001, t);
+  g.gain.exponentialRampToValueAtTime(.24, t + .04);
+  g.gain.setValueAtTime(.24, t + dur * .6);
+  g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  src.connect(f); f.connect(g); g.connect(fxBus);
+  src.start(t, Math.random() * 3); src.stop(t + dur + .05);
+}
+
 document.addEventListener('visibilitychange', () => {
+  if (document.hidden){
+    if (clockState.active){ clockWasRunning = clockState.active; pauseClock(); persist(); }
+  } else if (clockWasRunning){
+    clockState.active = clockWasRunning; clockState.since = Date.now();
+    clockWasRunning = null;
+    clockTick(performance.now(), true);
+  }
   if (!ctx) return;
   if (document.hidden){ ctx.suspend(); }
   else {
@@ -357,7 +434,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(38, 1, .1, 400);
+const camera = new THREE.PerspectiveCamera(38, 1, .6, 260);
 
 // --- ciel nocturne peint à la main, réutilisé comme carte d'environnement
 function skyTexture(){
@@ -467,6 +544,114 @@ selRing.position.y = .014;
 selRing.visible = false;
 board.add(selRing);
 
+// Lueur sous un roi menace. Texture peinte une fois : un halo dont le maximum
+// tombe au bord du socle, pour rester visible autour de la piece.
+const checkGlowMat = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+  rg.addColorStop(0,   'rgba(255,140,90,0)');
+  rg.addColorStop(.30, 'rgba(255,120,70,.26)');
+  rg.addColorStop(.48, 'rgba(242,74,42,.60)');
+  rg.addColorStop(.74, 'rgba(214,44,26,.20)');
+  rg.addColorStop(1,   'rgba(200,32,20,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  return new THREE.MeshBasicMaterial({ map: tex, transparent: true,
+    depthWrite: false, blending: THREE.AdditiveBlending, opacity: .5 });
+// ^ intensite de la lueur d'echec : monter vers 1 pour la rendre plus franche,
+//   descendre vers .3 pour la rendre plus sourde.
+})();
+const checkGlowGeo = new THREE.PlaneGeometry(1.32, 1.32);
+const checkGlows = [];
+function checkGlow(i){
+  while (checkGlows.length <= i){
+    const m = new THREE.Mesh(checkGlowGeo, checkGlowMat);
+    m.rotation.x = -Math.PI / 2;
+    m.renderOrder = -1;
+    m.visible = false;
+    board.add(m);
+    checkGlows.push(m);
+  }
+  return checkGlows[i];
+}
+
+// Un roi est en echec des qu'une piece adverse atteint sa case. Le plateau etant
+// libre, il peut y avoir zero, un ou plusieurs rois menaces a la fois.
+function kingsInCheck(){
+  const map = boardMap();
+  return pieces.filter(k => k.type === 'k' &&
+    pieces.some(o => o.color !== k.color && reaches(o, k.f, k.r, map)));
+}
+function refreshCheck(){
+  if (typeof pieces === 'undefined') return;
+  const ks = kingsInCheck();
+  ks.forEach((k, i) => {
+    const g = checkGlow(i), q = squarePos(k.f, k.r);
+    g.position.set(q.x, .012, q.z);
+    g.visible = true;
+  });
+  for (let i = ks.length; i < checkGlows.length; i++) checkGlows[i].visible = false;
+  needsRender = true;
+}
+
+// Les cases que l'adversaire vient de modifier restent eclairees, comme si la
+// lumiere venait du plateau lui-meme. L'eclairage ne s'eteint pas tout seul :
+// il attend le geste suivant du joueur, pour qu'un coup joué pendant que tu
+// avais l'ecran eteint soit encore visible a ton retour.
+// La teinte est FROIDE, cote lune : c'est ce qui la distingue au premier coup
+// d'oeil de la lueur rouge de l'echec, qui est chaude comme la lanterne.
+const litMat = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 96;
+  const g = c.getContext('2d');
+  // carre a bords fondus : lumiere posee sur la case, sans arete franche
+  const grd = g.createRadialGradient(48, 48, 6, 48, 48, 52);
+  grd.addColorStop(0,   'rgba(168,214,255,.95)');
+  grd.addColorStop(.62, 'rgba(140,196,250,.74)');
+  grd.addColorStop(.88, 'rgba(120,180,242,.24)');
+  grd.addColorStop(1,   'rgba(110,172,238,0)');
+  g.fillStyle = grd;
+  const rr = (x, y, w, h, r) => {
+    g.beginPath();
+    g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r); g.closePath(); g.fill();
+  };
+  rr(4, 4, 88, 88, 16);
+  return new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c),
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    opacity: .40 });
+  // ^ intensite du signal de coup joue : une seule valeur a bouger.
+})();
+const litGeo = new THREE.PlaneGeometry(.98, .98);
+const litPool = [];
+let litCount = 0;
+
+function litSquares(keys){
+  keys.forEach((k, i) => {
+    while (litPool.length <= i){
+      const m = new THREE.Mesh(litGeo, litMat);
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 1;
+      m.visible = false;
+      board.add(m);
+      litPool.push(m);
+    }
+    const c = k.split(','), q = squarePos(+c[0], +c[1]);
+    litPool[i].position.set(q.x, .017, q.z);
+    litPool[i].visible = true;
+  });
+  for (let i = keys.length; i < litPool.length; i++) litPool[i].visible = false;
+  litCount = keys.length;
+  needsRender = true;
+}
+function clearLit(){
+  if (!litCount) return;
+  litPool.forEach(m => m.visible = false);
+  litCount = 0;
+  needsRender = true;
+}
+
 let selected = null;
 function select(pc){
   selected = pc;
@@ -511,7 +696,7 @@ const PROFILES = {
       [.14,.58],[.225,.70],[.25,.78],[.20,.84],[0,.84]]
 };
 
-// tête de cavalier : silhouette extrudée, dans l'esprit des sets à venir
+// tête de cavalier : silhouette extrudée
 function knightHead(){
   const s = new THREE.Shape();
   s.moveTo(-.15, -.28);
@@ -624,8 +809,14 @@ function commitMove(pc, f, r){
 
   const occ = pieceAt(f, r);
   const cap = occ && occ !== pc ? { t: occ.type, c: occ.color, f: f, r: r } : null;
-  if (cap) removePiece(occ);
   const from = { f: pc.f, r: pc.r };
+  if (cap){
+    // la piece prise part dans le sens ou l'assaillant l'a poussee
+    const d = new THREE.Vector3(f - from.f, 0, from.r - r);
+    if (d.lengthSq() === 0) d.set(0, 0, 1);
+    d.normalize().applyQuaternion(board.quaternion);
+    capturePiece(occ, d);
+  }
   pc.f = f; pc.r = r;
   pc.grp.position.set(q.x, 0, q.z);
 
@@ -634,6 +825,9 @@ function commitMove(pc, f, r){
     rookMove.pc.f = rookMove.to.f; rookMove.pc.r = rookMove.to.r;
     rookMove.pc.grp.position.set(rq.x, 0, rq.z);
   }
+
+  // l'echec se lit sur la position d'arrivee, pas sur celle de depart
+  if (kingsInCheck().some(k => k.color !== pc.color)) notation += '+';
 
   feltDrop();
   logMove(pc, notation);
@@ -648,7 +842,7 @@ function addPiece(type, color, f, r){
   const grp = makePiece(type, color);
   const p = squarePos(f, r);
   grp.position.set(p.x, 0, p.z);
-  scene.add(grp);
+  board.add(grp);
   const obj = { type, color, f, r, grp };
   grp.userData.piece = obj;
   pieces.push(obj);
@@ -656,7 +850,7 @@ function addPiece(type, color, f, r){
 }
 function removePiece(obj){
   if (selected === obj) deselect();
-  scene.remove(obj.grp);
+  board.remove(obj.grp);
   pieces = pieces.filter(p => p !== obj);
 }
 function pieceAt(f, r){ return pieces.find(p => p.f === f && p.r === r); }
@@ -676,12 +870,358 @@ function standardSetup(){
 }
 
 /* ======================================================================
+   CIMETIÈRE
+   ====================================================================== */
+const GY_X = -5.75, GY_Y = -.465, GY_STEP = .52;
+const PUSH_MS = 200, FLY_MS = 620;
+let captured = [], capFlights = [];
+
+const graveMat = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.9, 8.6),
+  new THREE.MeshStandardMaterial({ color: 0x2B1519, roughness: .98, metalness: 0 })
+);
+graveMat.rotation.x = -Math.PI / 2;
+graveMat.position.set(GY_X, GY_Y + .002, 0);
+graveMat.receiveShadow = true;
+scene.add(graveMat);
+
+// Une piece prise revient a celui qui l'a prise : elle s'entasse donc du cote
+// du camp adverse au sien.
+function graveSlot(color, i){
+  const sign = other(color) === mySide ? 1 : -1;
+  const col = i % 3, row = Math.min(12, Math.floor(i / 3));
+  return { x: GY_X + (col - 1) * GY_STEP, y: GY_Y, z: sign * (.62 + row * GY_STEP) };
+}
+
+const _wp = new THREE.Vector3(), _wq = new THREE.Quaternion();
+function detachToWorld(grp){
+  board.updateMatrixWorld();
+  grp.getWorldPosition(_wp); grp.getWorldQuaternion(_wq);
+  board.remove(grp); scene.add(grp);
+  grp.position.copy(_wp); grp.quaternion.copy(_wq);
+}
+
+function capturePiece(occ, dirWorld){
+  if (selected === occ) deselect();
+  pieces = pieces.filter(x => x !== occ);
+  detachToWorld(occ.grp);
+  const idx = captured.filter(e => e.color === occ.color).length;
+  const slot = graveSlot(occ.color, idx);
+  captured.push({ type: occ.type, color: occ.color, grp: occ.grp, slot: slot });
+  capFlights.push({
+    grp: occ.grp, slot: slot, t0: performance.now(),
+    start: occ.grp.position.clone(),
+    push: occ.grp.position.clone().addScaledVector(dirWorld, .92),
+    q0: occ.grp.quaternion.clone()
+  });
+  slideSound();
+}
+
+function unbury(){
+  const e = captured.pop();
+  if (!e) return;
+  capFlights = capFlights.filter(f => f.grp !== e.grp);
+  scene.remove(e.grp);
+}
+function clearGrave(){
+  captured.forEach(e => scene.remove(e.grp));
+  capFlights = []; captured = [];
+}
+function relayoutGrave(){
+  const n = { w: 0, b: 0 };
+  captured.forEach(e => {
+    e.slot = graveSlot(e.color, n[e.color]++);
+    if (!capFlights.some(f => f.grp === e.grp))
+      e.grp.position.set(e.slot.x, e.slot.y, e.slot.z);
+  });
+}
+function restoreGrave(list){
+  clearGrave();
+  const n = { w: 0, b: 0 };
+  (list || []).forEach(o => {
+    const grp = makePiece(o.t, o.c);
+    const slot = graveSlot(o.c, n[o.c]++);
+    grp.position.set(slot.x, slot.y, slot.z);
+    scene.add(grp);
+    captured.push({ type: o.t, color: o.c, grp: grp, slot: slot });
+  });
+}
+
+const _idq = new THREE.Quaternion();
+function stepFlights(now){
+  if (!capFlights.length) return false;
+  for (let i = capFlights.length - 1; i >= 0; i--){
+    const fl = capFlights[i], t = now - fl.t0;
+    if (t < PUSH_MS){
+      const k = t / PUSH_MS;
+      fl.grp.position.lerpVectors(fl.start, fl.push, 1 - Math.pow(1 - k, 2));
+    } else if (t < PUSH_MS + FLY_MS){
+      const k = (t - PUSH_MS) / FLY_MS;
+      const e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      fl.grp.position.x = fl.push.x + (fl.slot.x - fl.push.x) * e;
+      fl.grp.position.z = fl.push.z + (fl.slot.z - fl.push.z) * e;
+      fl.grp.position.y = fl.push.y + (fl.slot.y - fl.push.y) * Math.min(1, e * 1.4);
+      fl.grp.quaternion.copy(fl.q0).slerp(_idq, e);   // methode presente des r128
+    } else {
+      fl.grp.position.set(fl.slot.x, fl.slot.y, fl.slot.z);
+      fl.grp.quaternion.copy(_idq);
+      capFlights.splice(i, 1);
+      feltDrop();
+    }
+  }
+  return true;
+}
+
+/* ======================================================================
+   HORLOGE
+   ====================================================================== */
+const CLK_W = 420, CLK_H = 552, FLIP_MS = 190;
+const clkCanvas = document.createElement('canvas');
+clkCanvas.width = CLK_W; clkCanvas.height = CLK_H;
+const cg = clkCanvas.getContext('2d');
+const clkTex = new THREE.CanvasTexture(clkCanvas);
+clkTex.encoding = THREE.sRGBEncoding;
+
+let plungerFront = null, plungerBack = null;
+const clockGrp = new THREE.Group();
+clockGrp.position.set(5.7, -.47, -.1);
+scene.add(clockGrp);
+
+(function buildClock(){
+  const wood  = new THREE.MeshStandardMaterial({ color: 0x3B2517, roughness: .52, metalness: .05 });
+  const brass = new THREE.MeshStandardMaterial({ color: 0xC9A055, roughness: .28, metalness: .88 });
+
+  // Boitier en pupitre, aligne sur le bord du plateau : haut a l'arriere,
+  // bas vers le joueur, pour que la face se presente au regard.
+  const prof = new THREE.Shape();
+  prof.moveTo(-1.35, 0); prof.lineTo(1.35, 0);
+  prof.lineTo(1.35, 1.32); prof.lineTo(-1.35, .72);
+  prof.closePath();
+  const bg = new THREE.ExtrudeGeometry(prof, {
+    depth: 1.75, bevelEnabled: true, bevelSize: .03, bevelThickness: .03, bevelSegments: 1
+  });
+  bg.translate(0, 0, -.875);
+  bg.rotateY(Math.PI / 2);
+  bg.computeVertexNormals();
+  const body = new THREE.Mesh(bg, wood);
+  clockGrp.add(body);
+
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(1.92, .10, 2.86), wood);
+  plinth.position.y = .04;
+  clockGrp.add(plinth);
+
+  const SLOPE = -(Math.PI / 2 - .2187);   // pente exacte du dessus du pupitre
+  const bez = new THREE.Mesh(new THREE.PlaneGeometry(1.76, 2.26), brass);
+  bez.rotation.x = SLOPE; bez.position.set(0, 1.046, 0);
+  clockGrp.add(bez);
+
+  // Le cadran s'eclaire lui-meme : il reste lisible lanterne baissee, et il est
+  // tenu hors du calcul des ombres pour qu'il ne s'assombrisse pas tout seul.
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.60, 2.10),
+    new THREE.MeshStandardMaterial({
+      map: clkTex, emissive: 0xffffff, emissiveMap: clkTex, emissiveIntensity: .72,
+      roughness: .6, metalness: 0
+    })
+  );
+  face.rotation.x = SLOPE; face.position.set(0, 1.062, 0);
+  clockGrp.add(face);
+
+  // Un piston du cote de chaque joueur : l'avant pour les clairs, l'arriere
+  // pour les sombres. Celui du camp qui decompte reste leve.
+  const plungerGeo = new THREE.CylinderGeometry(.125, .125, .22, 16);
+  plungerFront = new THREE.Mesh(plungerGeo, brass);
+  plungerFront.position.set(0, .866, 1.19);
+  clockGrp.add(plungerFront);
+  plungerBack = new THREE.Mesh(plungerGeo, brass);
+  plungerBack.position.set(0, 1.394, -1.19);
+  clockGrp.add(plungerBack);
+
+  clockGrp.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  face.castShadow = false; face.receiveShadow = false;
+  bez.castShadow = false; bez.receiveShadow = false;
+})();
+
+const clockState = { w: 0, b: 0, active: null, since: 0 };
+const shownChars = { w: null, b: null };
+const flips = { w: {}, b: {} };
+
+function clockTotalMs(){
+  const c = settings.clock;
+  return ((c.h * 3600) + (c.m * 60) + c.s) * 1000;
+}
+function remaining(side){
+  let ms = clockState[side];
+  if (clockState.active === side) ms -= (Date.now() - clockState.since);
+  return Math.max(0, ms);
+}
+function fmt(ms){
+  const t = Math.ceil(ms / 1000);
+  return Math.floor(t / 3600) + ':' +
+         String(Math.floor(t % 3600 / 60)).padStart(2, '0') + ':' +
+         String(t % 60).padStart(2, '0');
+}
+function resetClock(){
+  clockState.w = clockState.b = clockTotalMs();
+  clockState.active = null; clockState.paused = null; clockState.since = 0;
+  shownChars.w = shownChars.b = null;
+  flips.w = {}; flips.b = {};
+}
+function pauseClock(){
+  if (!clockState.active) return;
+  clockState[clockState.active] = remaining(clockState.active);
+  clockState.paused = clockState.active;
+  clockState.active = null;
+}
+function pressClock(){
+  if (clockState.active){
+    clockState[clockState.active] = remaining(clockState.active);
+    clockState.active = clockState.active === 'w' ? 'b' : 'w';
+  } else {
+    clockState.active = clockState.paused || 'w';   // sinon on demarre par les clairs
+  }
+  clockState.paused = null;
+  clockState.since = Date.now();
+  if (remaining(clockState.active) <= 0) clockState.active = null;
+  feltDrop(); clockTick(performance.now(), true); persist();
+}
+
+function roundRect(g, x, y, w, h, r){
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+function halfDigit(g, ch, x, y, w, h, top){
+  g.save();
+  g.beginPath();
+  if (top) g.rect(x, y, w, h / 2 - 1.5); else g.rect(x, y + h / 2 + 1.5, w, h / 2);
+  g.clip();
+  g.fillStyle = '#EFE4D0';
+  g.font = '700 ' + Math.round(h * .8) + 'px ui-monospace, Menlo, monospace';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(ch, x + w / 2, y + h / 2 + h * .025);
+  g.restore();
+}
+// Volet a bascule : la moitie haute tombe en montrant l'ancien chiffre,
+// puis se releve en montrant le nouveau.
+function card(g, x, y, w, h, ch, fl, now){
+  g.fillStyle = '#181310'; roundRect(g, x, y, w, h, 9); g.fill();
+  const k = fl ? Math.min(1, (now - fl.t0) / FLIP_MS) : null;
+  halfDigit(g, ch, x, y, w, h, true);
+  halfDigit(g, (k !== null && k < 1) ? fl.from : ch, x, y, w, h, false);
+  if (k !== null && k < 1){
+    const mid = y + h / 2;
+    g.save();
+    g.beginPath();
+    if (k < .5) g.rect(x, y, w, h / 2); else g.rect(x, mid, w, h / 2);
+    g.clip();
+    g.translate(0, mid); g.scale(1, k < .5 ? 1 - k * 2 : (k - .5) * 2); g.translate(0, -mid);
+    g.fillStyle = '#1E1712'; roundRect(g, x, y, w, h, 9); g.fill();
+    halfDigit(g, k < .5 ? fl.from : ch, x, y, w, h, k < .5);
+    g.restore();
+  }
+  g.fillStyle = 'rgba(0,0,0,.8)';
+  g.fillRect(x, y + h / 2 - 1.5, w, 3);
+}
+// Emblemes : disque clair pour les blancs, disque sombre cercle de clair
+// pour les noirs. Un anneau ambre entoure le camp dont le temps s'ecoule.
+function emblem(side, cx, cy){
+  const act = clockState.active === side;
+  if (act){
+    cg.strokeStyle = '#E9A63F'; cg.lineWidth = 4;
+    cg.beginPath(); cg.arc(cx, cy, 30, 0, 7); cg.stroke();
+  }
+  cg.fillStyle = side === 'w' ? '#EFE4D0' : '#141010';
+  cg.beginPath(); cg.arc(cx, cy, 19, 0, 7); cg.fill();
+  cg.strokeStyle = side === 'w' ? '#3A322A' : '#CFC2AC'; cg.lineWidth = 3;
+  cg.beginPath(); cg.arc(cx, cy, 19, 0, 7); cg.stroke();
+}
+function drawRow(side, y, now){
+  const txt = shownChars[side] || '0:00:00';
+  emblem(side, 46, y + 34);
+  cg.fillStyle = '#7A6C5C';
+  cg.font = '400 20px Georgia, serif';
+  cg.textAlign = 'left'; cg.textBaseline = 'middle';
+  cg.fillText(side === 'w' ? 'CLAIRS' : 'SOMBRES', 82, y + 35);
+  let x = 21;
+  const top = y + 75;
+  for (let i = 0; i < txt.length; i++){
+    const ch = txt[i];
+    if (ch === ':'){
+      cg.fillStyle = '#6E6153';
+      cg.beginPath(); cg.arc(x + 12, top + 42, 5, 0, 7); cg.fill();
+      cg.beginPath(); cg.arc(x + 12, top + 88, 5, 0, 7); cg.fill();
+      x += 29;
+    } else {
+      card(cg, x, top, 60, 130, ch, flips[side][i], now);
+      x += 65;
+    }
+  }
+}
+function drawClockFace(now){
+  cg.fillStyle = '#0B0906'; cg.fillRect(0, 0, CLK_W, CLK_H);
+  // Le haut de la toile se projette a l'arriere du pupitre : c'est le temps
+  // de l'adversaire. Le bas revient au joueur assis pres de la camera.
+  drawRow(other(mySide), 26, now);
+  cg.fillStyle = '#241D16'; cg.fillRect(20, 272, CLK_W - 40, 2);
+  drawRow(mySide, 302, now);
+  clkTex.needsUpdate = true;
+}
+function setSideText(side, txt, now){
+  const prev = shownChars[side];
+  if (prev === txt) return false;
+  if (prev){
+    for (let i = 0; i < txt.length; i++)
+      if (prev[i] !== txt[i] && txt[i] >= '0' && txt[i] <= '9')
+        flips[side][i] = { from: prev[i], to: txt[i], t0: now };
+  }
+  shownChars[side] = txt;
+  return true;
+}
+function anyFlip(now){
+  let live = false;
+  ['w','b'].forEach(side => {
+    Object.keys(flips[side]).forEach(i => {
+      if (now - flips[side][i].t0 < FLIP_MS) live = true;
+      else delete flips[side][i];
+    });
+  });
+  return live;
+}
+function setPlungers(){
+  if (!plungerFront) return;
+  const a = clockState.active;
+  plungerFront.position.y = .866 + (a === other(mySide) ? -.055 : .015);
+  plungerBack.position.y  = 1.394 + (a === mySide ? -.055 : .015);
+}
+function clockTick(now, force){
+  if (clockState.active && remaining(clockState.active) <= 0){
+    clockState[clockState.active] = 0;
+    clockState.active = null;
+    force = true;
+  }
+  let changed = !!force;
+  if (setSideText('w', fmt(remaining('w')), now)) changed = true;
+  if (setSideText('b', fmt(remaining('b')), now)) changed = true;
+  const live = anyFlip(now);
+  if (changed || live){
+    if (changed) setPlungers();
+    drawClockFace(now); needsRender = true;
+  }
+}
+
+/* ======================================================================
    CAMÉRA ORBITALE
    ====================================================================== */
-// quatre points de vue, un par cote du plateau, a hauteur constante
-const cam = { side: 0, theta: Math.PI / 2, phi: .78, dist: 15.5, target: new THREE.Vector3(0, 0, 0) };
+// La camera ne bouge plus : c'est le plateau qui pivote sur la table,
+// ce qui laisse l'horloge et les pieces prises immobiles a l'ecran.
+const cam = { side: 0, theta: Math.PI / 2, phi: .78, dist: 22, def: 22, target: new THREE.Vector3(0, 0, 0) };
 function applyCam(){
-  cam.dist = Math.max(7.5, Math.min(26, cam.dist));
+  cam.dist = Math.max(8, Math.min(cam.def * 1.7, cam.dist));
   camera.position.set(
     cam.target.x + cam.dist * Math.sin(cam.phi) * Math.cos(cam.theta),
     cam.target.y + cam.dist * Math.cos(cam.phi),
@@ -695,9 +1235,13 @@ function resize(){
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  // sur écran étroit, on recule un peu pour que le plateau tienne en largeur
   camera.fov = w / h < .72 ? 46 : 38;
   camera.updateProjectionMatrix();
+  // recul juste suffisant pour que l'affichage de l'horloge entre en entier
+  const prev = cam.def;
+  cam.def = Math.max(11, Math.min(32,
+    6.6 / (Math.tan(camera.fov * Math.PI / 360) * camera.aspect)));
+  cam.dist = prev ? cam.dist * (cam.def / prev) : cam.def;
   applyCam();
 }
 addEventListener('resize', resize);
@@ -706,10 +1250,26 @@ let turning = null;
 function turnTo(dir){
   if (turning) return;
   cam.side = (cam.side + dir + 4) % 4;
-  turning = { from: cam.theta, to: cam.theta + dir * Math.PI / 2, t0: performance.now() };
+  turning = { from: board.rotation.y, to: board.rotation.y + dir * Math.PI / 2, t0: performance.now() };
   requestAnimationFrame(tick);
 }
 function quarterTurn(){ turnTo(1); }
+
+// Place le joueur de son cote : son camp au bord proche, cadran et pistons
+// permutes en consequence.
+function orientSide(){
+  turning = null;
+  board.rotation.y = mySide === 'b' ? Math.PI : 0;
+  cam.side = mySide === 'b' ? 2 : 0;
+  relayoutGrave();
+  clockTick(performance.now(), true);
+  shadowsDirty();
+}
+function applySide(announce){
+  mySide = settings.side === 'random' ? (Math.random() < .5 ? 'w' : 'b') : settings.side;
+  orientSide();
+  if (announce) toast('Tu joues les ' + (mySide === 'w' ? 'clairs' : 'sombres'));
+}
 
 /* ======================================================================
    INTERACTION
@@ -742,6 +1302,20 @@ function groundPoint(x, y){
   ray.setFromCamera(ndc, camera);
   return ray.ray.intersectPlane(plane, hitPt) ? hitPt.clone() : null;
 }
+// Le plateau tournant, un point du sol doit etre ramene dans son repere
+// avant d'en deduire une case.
+const _lp = new THREE.Vector3();
+function boardPoint(x, y){
+  const g = groundPoint(x, y);
+  if (!g) return null;
+  board.updateMatrixWorld();
+  return board.worldToLocal(_lp.copy(g));
+}
+function pickClock(x, y){
+  toNdc(x, y);
+  ray.setFromCamera(ndc, camera);
+  return ray.intersectObject(clockGrp, true).length > 0;
+}
 function pickPiece(x, y){
   toNdc(x, y);
   ray.setFromCamera(ndc, camera);
@@ -754,10 +1328,12 @@ function pickPiece(x, y){
 
 cv.addEventListener('pointerdown', e => {
   boot();
+  clearLit();          // le geste du joueur eteint le signal de l'adversaire
   if (!seaOn && settings.sea > 0) startSea();
   cv.setPointerCapture(e.pointerId);
   downXY = { x: e.clientX, y: e.clientY };
   dragMoved = 0;
+  if (pickClock(e.clientX, e.clientY)){ mode2 = 'clock'; return; }
   const p = pickPiece(e.clientX, e.clientY);
   if (p){
     mode2 = 'drag'; dragged = p;
@@ -776,7 +1352,7 @@ cv.addEventListener('pointermove', e => {
   if (mode2 === 'orbit'){
     swipeDX = dx;            // on mesure seulement : la vue saute d'un cote a l'autre
   } else if (dragged){
-    const g = groundPoint(e.clientX, e.clientY);
+    const g = boardPoint(e.clientX, e.clientY);
     if (g){
       dragged.grp.position.x = Math.max(-4.6, Math.min(4.6, g.x));
       dragged.grp.position.z = Math.max(-4.6, Math.min(4.6, g.z));
@@ -787,6 +1363,11 @@ cv.addEventListener('pointermove', e => {
 });
 
 function endPointer(e){
+  if (mode2 === 'clock'){
+    if (dragMoved < 9) pressClock();
+    mode2 = null; downXY = null; swipeDX = 0;
+    return;
+  }
   if (mode2 === 'drag' && dragged){
     const g = dragged.grp;
     const f = Math.round(g.position.x + 3.5);
@@ -817,7 +1398,7 @@ function endPointer(e){
     if (Math.abs(swipeDX) > 45){
       turnTo(swipeDX > 0 ? 1 : -1);          // on pousse le plateau, il tourne avec le doigt
     } else if (dragMoved < 9 && downXY){
-      const g = groundPoint(downXY.x, downXY.y);
+      const g = boardPoint(downXY.x, downXY.y);
       if (g){
         const f = Math.round(g.x + 3.5), r = Math.round(3.5 - g.z);
         if (f >= 0 && f < 8 && r >= 0 && r < 8){
@@ -962,7 +1543,7 @@ function undo(){
         rk.grp.position.set(rq.x, 0, rq.z);
       }
     }
-    if (h.cap) addPiece(h.cap.t, h.cap.c, h.cap.f, h.cap.r);
+    if (h.cap){ unbury(); addPiece(h.cap.t, h.cap.c, h.cap.f, h.cap.r); }
     if (h.mn !== undefined){ moveNo = h.mn; lastColor = h.lc; }
     plyCount = Math.max(0, plyCount - 1);
   } else if (h.k === 'add'){
@@ -1018,6 +1599,122 @@ async function copy(text, label){
     document.body.removeChild(ta);
   }
 }
+/* ======================================================================
+   JEU EN LIGNE : repli par lien
+   Aucun serveur, aucun tiers. L'etat complet voyage encode dans le fragment
+   d'une adresse — la partie apres le # n'est jamais transmise a un serveur,
+   meme quand le lien est ouvert. Une position, pas des coups : impossible de
+   se desynchroniser durablement.
+   ====================================================================== */
+function encodePos(){
+  const j = JSON.stringify(snapshot());
+  return btoa(unescape(encodeURIComponent(j)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodePos(t){
+  const b = t.replace(/-/g, '+').replace(/_/g, '/');
+  return JSON.parse(decodeURIComponent(escape(atob(b))));
+}
+function posLink(){
+  return location.origin + location.pathname + '#p=' + encodePos();
+}
+
+// Applique une position recue et signale ce qui a change.
+function adoptPos(st){
+  const before = pieces.map(p => ({ t: p.type, c: p.color, f: p.f, r: p.r }));
+  applySnapshot(st);
+  litSquares(changedSquares(before, st.pieces));
+  persist(false);          // on adopte le numero de l'expediteur, on ne l'incremente pas
+  closeSheet();
+  toast('Position adoptée');
+}
+
+// Propose une position recue plutot que de l'appliquer d'office.
+function offerPos(st, source){
+  const mine = seq, theirs = st.seq || 0;
+  let warn = '';
+  if (theirs < mine)
+    warn = '<p class="note danger">Attention : cette position est plus ancienne ' +
+           'que la tienne (n° ' + theirs + ' contre n° ' + mine + '). ' +
+           'L\'adopter écrasera tes derniers coups.</p>';
+  else if (theirs === mine)
+    warn = '<p class="note">Cette position porte le même numéro que la tienne. ' +
+           'Vous avez peut-être joué chacun de votre côté.</p>';
+  openSheet(
+    '<h2>Position reçue</h2>' +
+    '<p class="note">' + source + ' — ' + (st.journal ? st.journal.length : 0) +
+    ' coup(s) au journal, position n° ' + theirs + '.</p>' + warn +
+    '<button class="wide" id="posGo">Adopter cette position</button>' +
+    '<button class="wide" id="posNo">Garder la mienne</button>'
+  );
+  document.getElementById('posGo').onclick = () => adoptPos(st);
+  document.getElementById('posNo').onclick = closeSheet;
+}
+
+// Extrait la charge utile de n'importe quoi qui contienne #p=
+function payloadOf(txt){
+  const i = txt.indexOf('#p=');
+  return (i >= 0 ? txt.slice(i + 3) : txt).trim().replace(/\s+/g, '');
+}
+
+// La ligne du haut : le presse-papiers a gauche, le maillon a droite.
+document.getElementById('netCopy').onclick = () => {
+  copy(posLink(), 'Lien (position n° ' + seq + ')');
+};
+
+// Tente de lire une position ; renvoie false si le texte n'en contient pas.
+function tryPos(raw, source){
+  if (!raw || !raw.trim()) return false;
+  let st = null;
+  try { st = decodePos(payloadOf(raw)); } catch(e){ return false; }
+  if (!st || !st.pieces) return false;
+  offerPos(st, source);
+  return true;
+}
+
+// Repli quand le navigateur refuse de donner le presse-papiers : on demande
+// un collage a la main. C'est le cas sur certaines configurations iOS.
+function pasteFallback(){
+  openSheet(
+    '<h2>Coller le lien</h2>' +
+    '<p class="note">Ton navigateur n\'autorise pas la lecture directe du ' +
+    'presse-papiers. Colle le lien ici.</p>' +
+    '<textarea id="pIn" rows="3" style="width:100%;box-sizing:border-box;' +
+    'font-size:15px;padding:8px;border-radius:8px;border:1px solid #5a4a38;' +
+    'background:#241c15;color:#e8d6b0"></textarea>' +
+    '<button class="wide" id="pGo">Lire cette position</button>'
+  );
+  const ta = document.getElementById('pIn');
+  setTimeout(() => ta.focus(), 60);
+  const go = () => { if (!tryPos(ta.value, 'Collée à la main')) toast('Lien illisible'); };
+  document.getElementById('pGo').onclick = go;
+  ta.addEventListener('input', () => { if (ta.value.indexOf('#p=') >= 0) go(); });
+}
+
+document.getElementById('netPaste').onclick = async () => {
+  let txt = null;
+  try {
+    txt = await navigator.clipboard.readText();
+  } catch(e){
+    return pasteFallback();       // refus, absence de permission, ou API absente
+  }
+  if (!txt || !txt.trim()) return toast('Presse-papiers vide');
+  if (!tryPos(txt, 'Collée depuis le presse-papiers'))
+    toast('Le presse-papiers ne contient pas de position');
+};
+
+// Position arrivee par l'adresse elle-meme, a l'ouverture.
+function readIncomingLink(){
+  const h = location.hash;
+  if (h.indexOf('#p=') !== 0) return;
+  // on nettoie l'adresse tout de suite, pour ne pas re-proposer a chaque reouverture
+  window.history.replaceState(null, '', location.pathname + location.search);
+  let st = null;
+  try { st = decodePos(h.slice(3)); } catch(e){ return toast('Lien reçu illisible'); }
+  if (!st || !st.pieces) return toast('Lien reçu illisible');
+  offerPos(st, 'Reçue par lien');
+}
+
 async function shareJournal(){
   const text = journalText();
   if (navigator.share){
@@ -1130,6 +1827,20 @@ function settingsSheet(){
     '<input type="range" id="sFx" min="0" max="100" value="' + settings.fx + '" style="width:100%">' +
     '<button class="wide" id="test">Tester le son</button>' +
     '<label class="check"><input type="checkbox" id="cSwell"' + (settings.swell ? ' checked' : '') + '> Houle lente</label>' +
+    '<div class="grp">Mon camp</div>' +
+    '<div class="g3" id="sideSel">' +
+      '<button data-s="w" class="' + (settings.side === 'w' ? 'on' : '') + '">Clairs</button>' +
+      '<button data-s="b" class="' + (settings.side === 'b' ? 'on' : '') + '">Sombres</button>' +
+      '<button data-s="random" class="' + (settings.side === 'random' ? 'on' : '') + '">Au hasard</button>' +
+    '</div>' +
+    '<div class="grp">Horloge</div>' +
+    '<div class="g3">' +
+      '<label class="tm">Heures<input type="number" id="ckH" inputmode="numeric" min="0" max="9" value="' + settings.clock.h + '"></label>' +
+      '<label class="tm">Minutes<input type="number" id="ckM" inputmode="numeric" min="0" max="59" value="' + settings.clock.m + '"></label>' +
+      '<label class="tm">Secondes<input type="number" id="ckS" inputmode="numeric" min="0" max="59" value="' + settings.clock.s + '"></label>' +
+    '</div>' +
+    '<button class="wide" id="ckSet">Appliquer et remettre à zéro</button>' +
+    '<button class="wide" id="ckPause">Mettre en pause</button>' +
     '<div class="grp">Vue</div>' +
     '<button class="wide" id="reset">Revenir au côté clair et au cadrage d\'origine</button>' +
     '<div class="grp">Partie</div>' +
@@ -1160,8 +1871,26 @@ function settingsSheet(){
     }, 260);
   };
   sheet.querySelector('#cSwell').onchange = e => { settings.swell = e.target.checked; persist(); };
+  sheet.querySelectorAll('#sideSel button').forEach(b => b.onclick = () => {
+    settings.side = b.dataset.s;
+    sheet.querySelectorAll('#sideSel button')
+      .forEach(x => x.classList.toggle('on', x.dataset.s === settings.side));
+    applySide(true); persist();
+  });
+  sheet.querySelector('#ckSet').onclick = () => {
+    const rd = (id, max) => Math.max(0, Math.min(max, parseInt(sheet.querySelector(id).value, 10) || 0));
+    settings.clock = { h: rd('#ckH', 9), m: rd('#ckM', 59), s: rd('#ckS', 59) };
+    if (clockTotalMs() === 0) settings.clock.m = 10;
+    resetClock(); clockTick(performance.now(), true); persist(); closeSheet();
+    toast('Horloge remise à ' + fmt(clockTotalMs()));
+  };
+  sheet.querySelector('#ckPause').onclick = () => {
+    pauseClock(); clockTick(performance.now(), true); persist(); closeSheet();
+    toast('Horloge en pause');
+  };
   sheet.querySelector('#reset').onclick = () => {
-    cam.side = 0; cam.theta = Math.PI / 2; cam.dist = 15.5; applyCam(); closeSheet();
+    cam.side = 0; board.rotation.y = 0; cam.dist = cam.def;
+    applyCam(); shadowsDirty(); closeSheet();
   };
   sheet.querySelector('#newg').onclick = () => { closeSheet(); askNewGame(); };
   sheet.querySelector('#close').onclick = closeSheet;
@@ -1196,41 +1925,88 @@ function banner(show, txt){
 document.getElementById('bannerGo').onclick = () => { shareJournal(); banner(false); };
 document.getElementById('bannerNo').onclick = () => banner(false);
 
+/* ======================================================================
+   ETAT PARTAGEABLE
+   Tout ce qui decrit la partie, et rien de ce qui decrit le joueur : ni
+   mySide ni les reglages n'en font partie, chacun garde son orientation,
+   sa lanterne et son volume. Le numero d'ordre 'seq' croit a chaque
+   modification du plateau ; c'est lui qui tranche en cas de conflit.
+   ====================================================================== */
+let seq = 0;
+
+function snapshot(){
+  return {
+    v: 1, seq,
+    pieces: pieces.map(p => ({ t: p.type, c: p.color, f: p.f, r: p.r })),
+    journal, plyCount, dirtyExport, moveNo, lastColor, startFen,
+    grave: captured.map(e => ({ t: e.type, c: e.color })),
+    clock: { w: remaining('w'), b: remaining('b'), active: clockState.active }
+  };
+}
+
+// Remplace la partie en cours. 'history' n'est volontairement pas transporte :
+// la pile d'annulation de l'adversaire n'a aucun sens de ce cote-ci.
+function applySnapshot(st){
+  clearBoard();
+  st.pieces.forEach(p => addPiece(p.t, p.c, p.f, p.r));
+  journal = st.journal || [];
+  history = [];
+  moveNo = st.moveNo || 1;
+  lastColor = st.lastColor === undefined ? null : st.lastColor;
+  startFen = st.startFen || null;
+  plyCount = st.plyCount || 0;
+  dirtyExport = !!st.dirtyExport;
+  restoreGrave(st.grave);
+  if (st.clock){
+    clockState.w = st.clock.w; clockState.b = st.clock.b;
+    clockState.active = st.clock.active || null;
+    clockState.since = Date.now();
+  }
+  seq = st.seq || 0;
+  shadowsDirty(); refreshCheck();
+}
+
+// Les cases dont l'occupant a change entre deux etats.
+function changedSquares(before, after){
+  const key = a => { const m = {}; a.forEach(x => { m[x.f + ',' + x.r] = x.t + x.c; }); return m; };
+  const A = key(before), B = key(after), out = [];
+  Object.keys(A).forEach(k => { if (A[k] !== B[k]) out.push(k); });
+  Object.keys(B).forEach(k => { if (A[k] === undefined) out.push(k); });
+  return out;
+}
+
 let saveTimer = null;
-function persist(){
+function persist(bump){
+  refreshCheck();
+  if (bump !== false) seq++;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     store.set('chess:settings', settings);
-    store.set('chess:state', {
-      pieces: pieces.map(p => ({ t: p.type, c: p.color, f: p.f, r: p.r })),
-      journal, history, plyCount, dirtyExport, moveNo, lastColor, startFen
-    });
+    store.set('chess:state', Object.assign(snapshot(), { mySide, history }));
   }, 260);
 }
 
 async function restore(){
   const s = await store.get('chess:settings');
   if (s) Object.assign(settings, s);
+  if (!settings.clock) settings.clock = { h:0, m:10, s:0 };
+  if (!settings.side) settings.side = 'w';
+  resetClock();
   document.getElementById('lampSlider').value = settings.lamp;
   applyLamp();
 
   const st = await store.get('chess:state');
   if (st && st.pieces && st.pieces.length){
-    clearBoard();
-    st.pieces.forEach(p => addPiece(p.t, p.c, p.f, p.r));
-    journal = st.journal || [];
+    // mySide d'abord : la mise en place du cimetiere en depend
+    mySide = st.mySide || (settings.side === 'random' ? 'w' : settings.side);
+    applySnapshot(st);
     history = st.history || [];
-    moveNo = st.moveNo || 1;
-    lastColor = st.lastColor === undefined ? null : st.lastColor;
-    startFen = st.startFen || null;
-    plyCount = st.plyCount || 0;
-    dirtyExport = !!st.dirtyExport;
     if (dirtyExport && journal.length)
       banner(true, 'Partie précédente non exportée');
   } else {
     standardSetup();
   }
-  shadowsDirty();
+  shadowsDirty(); refreshCheck();
 }
 
 /* ======================================================================
@@ -1270,9 +2046,12 @@ function askNewGame(){
 }
 function newGame(){
   deselect();
+  clearGrave();
   standardSetup();
   journal = []; history = []; plyCount = 0; dirtyExport = false;
   moveNo = 1; lastColor = null; startFen = fen();
+  resetClock();
+  applySide(settings.side === 'random');
   banner(false);
   shadowsDirty(); persist(); feltDrop();
 }
@@ -1285,12 +2064,15 @@ function shadowsDirty(){ renderer.shadowMap.needsUpdate = true; needsRender = tr
 
 function tick(now){
   if (turning){
-    const k = Math.min(1, (now - turning.t0) / 520);
+    const k = Math.min(1, (now - turning.t0) / 560);
     const e = k < .5 ? 4*k*k*k : 1 - Math.pow(-2*k + 2, 3) / 2;
-    cam.theta = turning.from + (turning.to - turning.from) * e;
-    applyCam();
-    if (k >= 1){ cam.theta = turning.to; turning = null; applyCam(); }
+    board.rotation.y = turning.from + (turning.to - turning.from) * e;
+    renderer.shadowMap.needsUpdate = true;   // les ombres suivent le plateau
+    if (k >= 1){ board.rotation.y = turning.to; turning = null; }
+    needsRender = true;
   }
+  clockTick(now);
+  if (stepFlights(now)){ renderer.shadowMap.needsUpdate = true; needsRender = true; }
   if (needsRender){
     renderer.render(scene, camera);
     needsRender = false;
@@ -1299,7 +2081,8 @@ function tick(now){
 }
 
 resize();
-restore().then(() => { shadowsDirty(); });
+drawClockFace(performance.now());
+restore().then(() => { orientSide(); readIncomingLink(); });
 requestAnimationFrame(tick);
 }
 </script>
