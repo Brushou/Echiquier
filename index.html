@@ -1622,11 +1622,22 @@ function posLink(){
 // Applique une position recue et signale ce qui a change.
 function adoptPos(st){
   const before = pieces.map(p => ({ t: p.type, c: p.color, f: p.f, r: p.r }));
+
+  // On se place en face de l'expediteur. mySide doit changer AVANT applySnapshot :
+  // la mise en place du cimetiere en depend. Les liens anciens n'ont pas de 'from',
+  // dans ce cas on ne touche a rien.
+  const target = st.from ? other(st.from) : mySide;
+  const flipped = target !== mySide;
+  mySide = target;
+
   applySnapshot(st);
+  if (flipped) orientSide();          // plateau, cadran et pistons suivent
   litSquares(changedSquares(before, st.pieces));
   persist(false);          // on adopte le numero de l'expediteur, on ne l'incremente pas
   closeSheet();
-  toast('Position adoptée');
+  toast(flipped
+    ? 'Position adoptée — tu joues les ' + (mySide === 'w' ? 'clairs' : 'sombres')
+    : 'Position adoptée');
 }
 
 // Propose une position recue plutot que de l'appliquer d'office.
@@ -1640,10 +1651,15 @@ function offerPos(st, source){
   else if (theirs === mine)
     warn = '<p class="note">Cette position porte le même numéro que la tienne. ' +
            'Vous avez peut-être joué chacun de votre côté.</p>';
+  let camp = '';
+  if (st.from && other(st.from) !== mySide)
+    camp = '<p class="note">Ton adversaire tient les ' +
+           (st.from === 'w' ? 'clairs' : 'sombres') + ' : tu passeras donc aux ' +
+           (st.from === 'w' ? 'sombres' : 'clairs') + ', et le plateau se retournera.</p>';
   openSheet(
     '<h2>Position reçue</h2>' +
     '<p class="note">' + source + ' — ' + (st.journal ? st.journal.length : 0) +
-    ' coup(s) au journal, position n° ' + theirs + '.</p>' + warn +
+    ' coup(s) au journal, position n° ' + theirs + '.</p>' + camp + warn +
     '<button class="wide" id="posGo">Adopter cette position</button>' +
     '<button class="wide" id="posNo">Garder la mienne</button>'
   );
@@ -1927,16 +1943,19 @@ document.getElementById('bannerNo').onclick = () => banner(false);
 
 /* ======================================================================
    ETAT PARTAGEABLE
-   Tout ce qui decrit la partie, et rien de ce qui decrit le joueur : ni
-   mySide ni les reglages n'en font partie, chacun garde son orientation,
-   sa lanterne et son volume. Le numero d'ordre 'seq' croit a chaque
-   modification du plateau ; c'est lui qui tranche en cas de conflit.
+   Tout ce qui decrit la partie, et rien de ce qui decrit les gouts du joueur :
+   lanterne, son et cadrage restent strictement locaux. Seule exception, le
+   camp : l'expediteur declare le sien dans 'from', et le destinataire prend
+   automatiquement l'autre — deux joueurs ne peuvent pas tenir les memes
+   pieces. Le numero d'ordre 'seq' croit a chaque modification du plateau ;
+   c'est lui qui tranche en cas de conflit.
    ====================================================================== */
 let seq = 0;
 
 function snapshot(){
   return {
     v: 1, seq,
+    from: mySide,          // le camp de l'expediteur : le destinataire prend l'autre
     pieces: pieces.map(p => ({ t: p.type, c: p.color, f: p.f, r: p.r })),
     journal, plyCount, dirtyExport, moveNo, lastColor, startFen,
     grave: captured.map(e => ({ t: e.type, c: e.color })),
