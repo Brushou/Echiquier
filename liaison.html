@@ -1,0 +1,374 @@
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Banc d'essai — liaison</title>
+<style>
+  :root{
+    --night:#070C13; --deep:#0E1722; --moon:#93B4CC; --lantern:#F0A63C;
+    --bone:#EBE0CE; --dim:#7A8A98; --line:#1E2C3A;
+    --ok:#7FBF8A; --bad:#E08A7A; --wait:#D9B36C;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--night);color:var(--bone);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  body{padding:calc(12px + env(safe-area-inset-top)) 14px calc(16px + env(safe-area-inset-bottom))}
+  h1{font:400 19px/1.2 Georgia,serif;margin:0 0 2px}
+  .sub{color:var(--dim);font-size:12.5px;margin:0 0 16px}
+  .grp{font:400 11px/1 Georgia,serif;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--dim);margin:20px 0 9px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  button{font:inherit;font-size:13px;color:var(--bone);cursor:pointer;
+    background:rgba(30,44,58,.72);border:1px solid var(--line);border-radius:4px;
+    padding:11px 6px;transition:background .14s}
+  button:active{background:rgba(48,68,88,.9)}
+  button[disabled]{opacity:.38}
+  .on{background:rgba(240,166,60,.16);border-color:var(--lantern);color:#FFD9A0}
+  .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .g2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .wide{width:100%;margin-top:9px}
+  /* meme traitement que le champ du futur panneau : on teste le pave numerique */
+  #code{font:18px/1 ui-monospace,Menlo,monospace;letter-spacing:.34em;
+    color:var(--bone);background:#08101A;border:1px solid var(--line);border-radius:4px;
+    padding:13px 4px;text-align:center;width:100%;-moz-appearance:textfield}
+  #code::-webkit-outer-spin-button,#code::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  #mine{font:400 40px/1.1 ui-monospace,Menlo,monospace;letter-spacing:.2em;
+    text-align:center;color:var(--lantern);padding:10px 0 4px;min-height:54px}
+  .st{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+    padding:7px 0;border-bottom:1px solid rgba(30,44,58,.5);font-size:13.5px}
+  .st b{font-weight:400;color:var(--dim);font-size:12.5px}
+  .st span{font-family:ui-monospace,Menlo,monospace;font-size:13px;text-align:right}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .wait{color:var(--wait)} .dimc{color:var(--dim)}
+  #log{font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:#B9C9D6;background:#08101A;border:1px solid var(--line);border-radius:4px;
+    padding:10px 11px;height:38vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    white-space:pre-wrap;word-break:break-word;margin-top:4px}
+  #log i{color:#4E5E6C;font-style:normal}
+  #log .e{color:var(--bad)} #log .g{color:var(--ok)} #log .w{color:var(--wait)}
+</style>
+
+<h1>Banc d'essai — liaison</h1>
+<p class="sub">Fichier jetable. Ne fait rien d'autre que mettre deux appareils en relation et survivre.</p>
+
+<div class="grp">Stratégie</div>
+<div class="g3">
+  <button id="sNostr" class="on">Nostr</button>
+  <button id="sMqtt">MQTT</button>
+  <button id="sTorrent">BitTorrent</button>
+</div>
+
+<div class="grp">Salon</div>
+<div id="mine">—</div>
+<div class="g2">
+  <button id="bCreate">Créer un salon</button>
+  <button id="bLeave" disabled>Quitter</button>
+</div>
+<input id="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="5"
+       autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+       placeholder="•••••" style="margin-top:9px">
+<button class="wide" id="bJoin">Rejoindre ce salon</button>
+
+<div class="grp">État</div>
+<div class="st"><b>Bibliothèque</b><span id="vLib" class="dimc">non chargée</span></div>
+<div class="st"><b>Relais</b><span id="vRelay" class="dimc">—</span></div>
+<div class="st"><b>Pair</b><span id="vPeer" class="dimc">absent</span></div>
+<div class="st"><b>Appariement</b><span id="vJoin" class="dimc">—</span></div>
+<div class="st"><b>Latence</b><span id="vPing" class="dimc">—</span></div>
+<div class="st"><b>Dernier message reçu</b><span id="vLast" class="dimc">—</span></div>
+<div class="st"><b>Arrière-plan</b><span id="vHid" class="dimc">—</span></div>
+
+<div class="grp">Essais</div>
+<div class="g2">
+  <button id="bPing" disabled>Mesurer la latence</button>
+  <button id="bBlob" disabled>Envoyer 3 ko</button>
+  <button id="bSeq" disabled>Demander son n°</button>
+  <button id="bRe" disabled>Reconnecter</button>
+</div>
+
+<div class="grp">Journal</div>
+<div class="g2">
+  <button id="bCopy">Copier le journal</button>
+  <button id="bClear">Effacer</button>
+</div>
+<div id="log"></div>
+
+<script>
+'use strict';
+
+/* ----------------------------------------------------------------------
+   Le banc ne teste qu'une chose : est-ce que la liaison tient ?
+   Tout est journalise avec un horodatage relatif au demarrage, pour que
+   les evenements du gel iOS soient lisibles apres coup.
+   ---------------------------------------------------------------------- */
+
+const T0 = Date.now();
+const el = id => document.getElementById(id);
+const logEl = el('log');
+let lines = [];
+
+function stamp(){
+  const s = (Date.now() - T0) / 1000;
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' +
+         (s % 60).toFixed(1).padStart(4, '0');
+}
+function log(msg, cls){
+  const line = stamp() + '  ' + msg;
+  lines.push(line);
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = line;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function set(id, txt, cls){
+  const n = el(id);
+  n.textContent = txt;
+  n.className = cls || '';
+}
+
+/* ---------- chargement a la demande, exactement comme le fera l'appli ---------- */
+
+// Nostr est epingle : c'est la version verifiee. Les deux autres ne le sont pas,
+// leurs paquets sont separes et je n'ai pas pu confirmer leurs numeros — le banc
+// est justement la pour decouvrir s'ils se chargent.
+const STRATS = {
+  nostr:   { label: 'Nostr',      url: 'https://esm.run/trystero@0.25.2' },
+  mqtt:    { label: 'MQTT',       url: 'https://esm.run/@trystero-p2p/mqtt' },
+  torrent: { label: 'BitTorrent', url: 'https://esm.run/@trystero-p2p/torrent' }
+};
+let strat = 'nostr';
+let lib = null;          // module charge
+let libFor = null;       // pour quelle strategie
+
+async function loadLib(){
+  if (lib && libFor === strat) return lib;
+  const s = STRATS[strat];
+  set('vLib', 'chargement…', 'wait');
+  log('chargement de ' + s.url);
+  const t = Date.now();
+  try {
+    lib = await import(s.url);
+    libFor = strat;
+    set('vLib', s.label + ' — ' + (Date.now() - t) + ' ms', 'ok');
+    log('bibliothèque chargée en ' + (Date.now() - t) + ' ms', 'g');
+    if (lib.selfId) log('mon identifiant : ' + lib.selfId);
+    return lib;
+  } catch(e){
+    set('vLib', 'échec', 'bad');
+    log('ÉCHEC du chargement : ' + (e && e.message ? e.message : e), 'e');
+    return null;
+  }
+}
+
+['nostr','mqtt','torrent'].forEach(k => {
+  el('s' + k[0].toUpperCase() + k.slice(1)).onclick = () => {
+    if (room) return log('quitte le salon avant de changer de stratégie', 'w');
+    strat = k;
+    ['sNostr','sMqtt','sTorrent'].forEach(i => el(i).classList.remove('on'));
+    el('s' + k[0].toUpperCase() + k.slice(1)).classList.add('on');
+    lib = null; libFor = null;
+    set('vLib', 'non chargée', 'dimc');
+    log('stratégie : ' + STRATS[k].label);
+  };
+});
+
+/* ---------- le salon ---------- */
+
+const APP_ID = 'echiquier-nocturne-banc-essai';
+let room = null, roomId = null;
+let peerId = null, joinT0 = 0, lastRx = 0;
+let aBeat = null, aBlob = null, aSeq = null;
+let mySeq = Math.floor(Math.random() * 100);   // numero bidon, pour l'essai requete/reponse
+
+const digits = () => String(Math.floor(Math.random() * 100000)).padStart(5, '0');
+
+async function enter(id){
+  const L = await loadLib();
+  if (!L) return;
+  if (room) leave();
+
+  roomId = id;
+  el('mine').textContent = id;
+  joinT0 = Date.now();
+  set('vJoin', 'en attente…', 'wait');
+  log('entrée dans le salon ' + id + ' (' + STRATS[strat].label + ')');
+
+  try {
+    room = L.joinRoom({ appId: APP_ID }, id, {
+      // Le signal d'echec qui declenchera, dans l'appli, le repli par lien.
+      onJoinError: d => {
+        set('vJoin', 'échec', 'bad');
+        log('onJoinError — ' + JSON.stringify({
+          peerId: d && d.peerId,
+          error: d && d.error ? String(d.error.message || d.error) : null
+        }), 'e');
+        log('>>> c\'est ici que l\'appli basculerait sur le mode par lien', 'w');
+      }
+    });
+  } catch(e){
+    set('vJoin', 'échec', 'bad');
+    return log('joinRoom a jeté : ' + (e && e.message ? e.message : e), 'e');
+  }
+
+  aBeat = room.makeAction('beat');
+  aBlob = room.makeAction('blob');
+  aSeq  = room.makeAction('seq', {
+    kind: 'request',
+    onRequest: () => mySeq            // l'adversaire demande mon numero d'ordre
+  });
+
+  aBeat.onMessage = (n, m) => {
+    lastRx = Date.now();
+    log('battement n° ' + n + ' reçu', 'g');
+  };
+  aBlob.onMessage = (d, m) => {
+    lastRx = Date.now();
+    const size = typeof d === 'string' ? d.length : (d.byteLength || 0);
+    log('charge reçue : ' + size + ' octets', 'g');
+  };
+
+  room.onPeerJoin = id => {
+    peerId = id;
+    lastRx = Date.now();
+    const ms = Date.now() - joinT0;
+    set('vPeer', id.slice(0, 8) + '…', 'ok');
+    set('vJoin', ms + ' ms', 'ok');
+    log('PAIR ARRIVÉ en ' + ms + ' ms — ' + id, 'g');
+    ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = false);
+  };
+  room.onPeerLeave = id => {
+    peerId = null;
+    set('vPeer', 'perdu', 'bad');
+    log('PAIR PARTI — ' + id, 'e');
+    ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = true);
+  };
+
+  el('bLeave').disabled = false;
+  el('bRe').disabled = false;
+  pollRelays();
+}
+
+function leave(){
+  if (room){ try { room.leave(); } catch(e){} }
+  room = null; peerId = null;
+  set('vPeer', 'absent', 'dimc');
+  ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = true);
+  el('bLeave').disabled = true;
+  log('salon quitté');
+}
+
+el('bCreate').onclick = () => { const d = digits(); el('code').value = d; enter(d); };
+el('bJoin').onclick = () => {
+  const v = (el('code').value || '').replace(/\D/g, '');
+  if (v.length !== 5) return log('il faut cinq chiffres', 'w');
+  enter(v);
+};
+el('bLeave').onclick = leave;
+
+/* ---------- reconnexion ---------- */
+// Une reconnexion, c'est quitter puis re-entrer : joinRoom est idempotent et
+// renverrait sinon la meme instance morte.
+async function reconnect(why){
+  if (!roomId) return;
+  log('reconnexion (' + why + ')', 'w');
+  leave();
+  await new Promise(r => setTimeout(r, 400));
+  enter(roomId);
+}
+el('bRe').onclick = () => reconnect('manuelle');
+
+/* ---------- essais ---------- */
+el('bPing').onclick = async () => {
+  if (!room || !peerId) return;
+  try {
+    const ms = await room.ping(peerId);
+    set('vPing', ms + ' ms', ms < 400 ? 'ok' : 'wait');
+    log('latence : ' + ms + ' ms');
+  } catch(e){ log('ping échoué : ' + e, 'e'); }
+};
+el('bBlob').onclick = () => {
+  if (!aBlob) return;
+  const payload = 'x'.repeat(3000);      // l'ordre de grandeur d'un snapshot compresse
+  const t = Date.now();
+  aBlob.send(payload).then(
+    () => log('3 ko envoyés en ' + (Date.now() - t) + ' ms'),
+    e => log('envoi échoué : ' + e, 'e')
+  );
+};
+el('bSeq').onclick = async () => {
+  if (!aSeq || !peerId) return;
+  try {
+    const v = await aSeq.request(null, { target: peerId, timeoutMs: 3000 });
+    log('son numéro : ' + v + ' — le mien : ' + mySeq +
+        ' → ' + (v > mySeq ? 'il pousse' : v < mySeq ? 'je pousse' : 'égalité'), 'g');
+  } catch(e){ log('demande sans réponse (délai dépassé)', 'e'); }
+};
+
+/* ---------- battement de coeur ---------- */
+// Sans battement, une liaison morte reste indistinguable d'une liaison silencieuse.
+let beatNo = 0;
+setInterval(() => {
+  if (aBeat && peerId){ beatNo++; aBeat.send(beatNo); }
+  if (lastRx){
+    const age = ((Date.now() - lastRx) / 1000).toFixed(0);
+    set('vLast', 'il y a ' + age + ' s', age > 15 ? 'bad' : age > 8 ? 'wait' : 'ok');
+  }
+}, 4000);
+
+/* ---------- etat des relais ---------- */
+function pollRelays(){
+  if (!lib || !lib.getRelaySockets) return set('vRelay', 'non disponible', 'dimc');
+  try {
+    const s = lib.getRelaySockets();
+    const urls = Object.keys(s);
+    const open = urls.filter(u => s[u] && s[u].readyState === 1).length;
+    set('vRelay', open + ' / ' + urls.length + ' ouverts',
+        open === 0 ? 'bad' : open < urls.length ? 'wait' : 'ok');
+  } catch(e){ set('vRelay', 'erreur', 'bad'); }
+}
+setInterval(pollRelays, 3000);
+
+/* ---------- le gel iOS ---------- */
+let hidT = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden){
+    hidT = Date.now();
+    log('=== ARRIÈRE-PLAN ===', 'w');
+    if (lib && lib.pauseRelayReconnection){
+      try { lib.pauseRelayReconnection(); log('pauseRelayReconnection()'); } catch(e){}
+    }
+  } else {
+    const away = ((Date.now() - hidT) / 1000).toFixed(1);
+    set('vHid', 'absent ' + away + ' s', 'dimc');
+    log('=== RETOUR après ' + away + ' s ===', 'w');
+    if (lib && lib.resumeRelayReconnection){
+      try { lib.resumeRelayReconnection(); log('resumeRelayReconnection()'); } catch(e){}
+    }
+    pollRelays();
+    // On laisse trois secondes a la liaison pour se manifester d'elle-meme
+    // avant de conclure qu'elle est morte.
+    setTimeout(() => {
+      if (!room) return;
+      const peers = Object.keys(room.getPeers ? room.getPeers() : {});
+      log('au retour : ' + peers.length + ' pair(s) dans le salon');
+      if (peers.length === 0 && roomId) reconnect('pair perdu au retour');
+    }, 3000);
+  }
+});
+
+/* ---------- journal ---------- */
+el('bCopy').onclick = async () => {
+  const txt = 'Banc — ' + STRATS[strat].label + ' — ' + navigator.userAgent + '\n\n' +
+              lines.join('\n');
+  try { await navigator.clipboard.writeText(txt); log('journal copié'); }
+  catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); log('journal copié'); }
+    catch(e2){ log('copie impossible', 'e'); }
+    document.body.removeChild(ta);
+  }
+};
+el('bClear').onclick = () => { lines = []; logEl.innerHTML = ''; };
+
+log('banc prêt — ' + (navigator.userAgent.match(/iPhone|iPad|Mac|Windows/) || ['?'])[0]);
+</script>
