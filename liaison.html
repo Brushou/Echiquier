@@ -1,7 +1,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Banc d'essai — liaison</title>
+<title>Banc d'essai — liaison v2</title>
 <style>
   :root{
     --night:#070C13; --deep:#0E1722; --moon:#93B4CC; --lantern:#F0A63C;
@@ -25,13 +25,16 @@
   .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
   .g2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
   .wide{width:100%;margin-top:9px}
-  /* meme traitement que le champ du futur panneau : on teste le pave numerique */
   #code{font:18px/1 ui-monospace,Menlo,monospace;letter-spacing:.34em;
     color:var(--bone);background:#08101A;border:1px solid var(--line);border-radius:4px;
     padding:13px 4px;text-align:center;width:100%;-moz-appearance:textfield}
   #code::-webkit-outer-spin-button,#code::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   #mine{font:400 40px/1.1 ui-monospace,Menlo,monospace;letter-spacing:.2em;
     text-align:center;color:var(--lantern);padding:10px 0 4px;min-height:54px}
+  #silence{font:400 30px/1.1 ui-monospace,Menlo,monospace;text-align:center;
+    padding:6px 0 2px;color:var(--dim)}
+  #silence small{display:block;font:400 11px/1 Georgia,serif;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--dim);margin-top:7px}
   .st{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
     padding:7px 0;border-bottom:1px solid rgba(30,44,58,.5);font-size:13.5px}
   .st b{font-weight:400;color:var(--dim);font-size:12.5px}
@@ -41,12 +44,11 @@
     color:#B9C9D6;background:#08101A;border:1px solid var(--line);border-radius:4px;
     padding:10px 11px;height:38vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
     white-space:pre-wrap;word-break:break-word;margin-top:4px}
-  #log i{color:#4E5E6C;font-style:normal}
   #log .e{color:var(--bad)} #log .g{color:var(--ok)} #log .w{color:var(--wait)}
 </style>
 
-<h1>Banc d'essai — liaison</h1>
-<p class="sub">Fichier jetable. Ne fait rien d'autre que mettre deux appareils en relation et survivre.</p>
+<h1>Banc d'essai — liaison <span style="color:var(--dim);font-size:13px">v2</span></h1>
+<p class="sub">Vivacité mesurée au trafic réel, plus à la liste des pairs.</p>
 
 <div class="grp">Stratégie</div>
 <div class="g3">
@@ -66,14 +68,17 @@
        placeholder="•••••" style="margin-top:9px">
 <button class="wide" id="bJoin">Rejoindre ce salon</button>
 
+<div class="grp">Silence</div>
+<div id="silence">—<small>depuis le dernier message reçu</small></div>
+
 <div class="grp">État</div>
 <div class="st"><b>Bibliothèque</b><span id="vLib" class="dimc">non chargée</span></div>
 <div class="st"><b>Relais</b><span id="vRelay" class="dimc">—</span></div>
-<div class="st"><b>Pair</b><span id="vPeer" class="dimc">absent</span></div>
-<div class="st"><b>Appariement</b><span id="vJoin" class="dimc">—</span></div>
+<div class="st"><b>Liaison</b><span id="vPeer" class="dimc">absente</span></div>
+<div class="st"><b>Dernier appariement</b><span id="vJoin" class="dimc">—</span></div>
 <div class="st"><b>Latence</b><span id="vPing" class="dimc">—</span></div>
-<div class="st"><b>Dernier message reçu</b><span id="vLast" class="dimc">—</span></div>
-<div class="st"><b>Arrière-plan</b><span id="vHid" class="dimc">—</span></div>
+<div class="st"><b>Reconnexions forcées</b><span id="vRec" class="dimc">0</span></div>
+<div class="st"><b>Dernière absence</b><span id="vHid" class="dimc">—</span></div>
 
 <div class="grp">Essais</div>
 <div class="g2">
@@ -93,11 +98,30 @@
 <script>
 'use strict';
 
-/* ----------------------------------------------------------------------
-   Le banc ne teste qu'une chose : est-ce que la liaison tient ?
-   Tout est journalise avec un horodatage relatif au demarrage, pour que
-   les evenements du gel iOS soient lisibles apres coup.
-   ---------------------------------------------------------------------- */
+/* ======================================================================
+   BANC D'ESSAI v2
+
+   Ce que la v1 a appris, et qui est corrige ici :
+
+   1. joinT0 n'etait remis a zero qu'a l'entree dans un salon. Un pair qui
+      revenait dans un salon deja ouvert produisait un delai absurde
+      (378 325 ms) qui ne mesurait que le temps ecoule depuis le debut de
+      la seance. On chronometre desormais depuis le debut de CHAQUE
+      attente : entree dans le salon, ou perte du pair.
+
+   2. getPeers() a menti : il annoncait un pair mort depuis sept secondes.
+      La liste des pairs n'est pas une preuve de vie. Seul le trafic
+      reellement recu en est une. Toute la logique repose maintenant sur
+      lastRx.
+
+   3. Forcer la reconnexion des la perte du pair est une erreur : la v1 a
+      montre Trystero se retablir seul. On accorde un delai de grace.
+   ====================================================================== */
+
+const BEAT_MS  = 4000;   // periode du battement de coeur
+const DEAD_MS  = 13000;  // silence au-dela duquel on declare la liaison morte
+                         // (trois battements manques, plus une marge)
+const GRACE_MS = 1500;   // temps laisse a la reconnexion avant de rejouer
 
 const T0 = Date.now();
 const el = id => document.getElementById(id);
@@ -124,32 +148,26 @@ function set(id, txt, cls){
   n.className = cls || '';
 }
 
-/* ---------- chargement a la demande, exactement comme le fera l'appli ---------- */
+/* ---------- chargement a la demande ---------- */
 
-// Nostr est epingle : c'est la version verifiee. Les deux autres ne le sont pas,
-// leurs paquets sont separes et je n'ai pas pu confirmer leurs numeros — le banc
-// est justement la pour decouvrir s'ils se chargent.
 const STRATS = {
   nostr:   { label: 'Nostr',      url: 'https://esm.run/trystero@0.25.2' },
   mqtt:    { label: 'MQTT',       url: 'https://esm.run/@trystero-p2p/mqtt' },
   torrent: { label: 'BitTorrent', url: 'https://esm.run/@trystero-p2p/torrent' }
 };
 let strat = 'nostr';
-let lib = null;          // module charge
-let libFor = null;       // pour quelle strategie
+let lib = null, libFor = null;
 
 async function loadLib(){
   if (lib && libFor === strat) return lib;
   const s = STRATS[strat];
   set('vLib', 'chargement…', 'wait');
-  log('chargement de ' + s.url);
   const t = Date.now();
   try {
     lib = await import(s.url);
     libFor = strat;
     set('vLib', s.label + ' — ' + (Date.now() - t) + ' ms', 'ok');
     log('bibliothèque chargée en ' + (Date.now() - t) + ' ms', 'g');
-    if (lib.selfId) log('mon identifiant : ' + lib.selfId);
     return lib;
   } catch(e){
     set('vLib', 'échec', 'bad');
@@ -159,11 +177,12 @@ async function loadLib(){
 }
 
 ['nostr','mqtt','torrent'].forEach(k => {
-  el('s' + k[0].toUpperCase() + k.slice(1)).onclick = () => {
+  const btn = 's' + k[0].toUpperCase() + k.slice(1);
+  el(btn).onclick = () => {
     if (room) return log('quitte le salon avant de changer de stratégie', 'w');
     strat = k;
     ['sNostr','sMqtt','sTorrent'].forEach(i => el(i).classList.remove('on'));
-    el('s' + k[0].toUpperCase() + k.slice(1)).classList.add('on');
+    el(btn).classList.add('on');
     lib = null; libFor = null;
     set('vLib', 'non chargée', 'dimc');
     log('stratégie : ' + STRATS[k].label);
@@ -173,71 +192,68 @@ async function loadLib(){
 /* ---------- le salon ---------- */
 
 const APP_ID = 'echiquier-nocturne-banc-essai';
-let room = null, roomId = null;
-let peerId = null, joinT0 = 0, lastRx = 0;
+let room = null, roomId = null, peerId = null;
+let waitT0 = 0;        // debut de l'attente courante — remis a zero a CHAQUE attente
+let firstJoin = true;  // pour distinguer appariement initial et reprise
+let lastRx = 0;        // horodatage du dernier message REELLEMENT recu
+let recCount = 0;
 let aBeat = null, aBlob = null, aSeq = null;
-let mySeq = Math.floor(Math.random() * 100);   // numero bidon, pour l'essai requete/reponse
+let mySeq = Math.floor(Math.random() * 100);
 
 const digits = () => String(Math.floor(Math.random() * 100000)).padStart(5, '0');
 
 async function enter(id){
   const L = await loadLib();
   if (!L) return;
-  if (room) leave();
+  if (room) leave(true);
 
   roomId = id;
   el('mine').textContent = id;
-  joinT0 = Date.now();
-  set('vJoin', 'en attente…', 'wait');
+  waitT0 = Date.now();          // (1) le chronometre part ici
+  lastRx = 0;
+  set('vPeer', 'en attente…', 'wait');
   log('entrée dans le salon ' + id + ' (' + STRATS[strat].label + ')');
 
   try {
     room = L.joinRoom({ appId: APP_ID }, id, {
-      // Le signal d'echec qui declenchera, dans l'appli, le repli par lien.
       onJoinError: d => {
-        set('vJoin', 'échec', 'bad');
-        log('onJoinError — ' + JSON.stringify({
-          peerId: d && d.peerId,
-          error: d && d.error ? String(d.error.message || d.error) : null
-        }), 'e');
-        log('>>> c\'est ici que l\'appli basculerait sur le mode par lien', 'w');
+        set('vPeer', 'échec WebRTC', 'bad');
+        log('onJoinError — ' + (d && d.error ? String(d.error.message || d.error) : '?'), 'e');
+        log('>>> ici l\'appli basculerait sur le mode par lien', 'w');
       }
     });
   } catch(e){
-    set('vJoin', 'échec', 'bad');
+    set('vPeer', 'échec', 'bad');
     return log('joinRoom a jeté : ' + (e && e.message ? e.message : e), 'e');
   }
 
   aBeat = room.makeAction('beat');
   aBlob = room.makeAction('blob');
-  aSeq  = room.makeAction('seq', {
-    kind: 'request',
-    onRequest: () => mySeq            // l'adversaire demande mon numero d'ordre
-  });
+  aSeq  = room.makeAction('seq', { kind: 'request', onRequest: () => mySeq });
 
-  aBeat.onMessage = (n, m) => {
-    lastRx = Date.now();
-    log('battement n° ' + n + ' reçu', 'g');
-  };
-  aBlob.onMessage = (d, m) => {
+  aBeat.onMessage = n => { lastRx = Date.now(); };
+  aBlob.onMessage = d => {
     lastRx = Date.now();
     const size = typeof d === 'string' ? d.length : (d.byteLength || 0);
     log('charge reçue : ' + size + ' octets', 'g');
   };
 
-  room.onPeerJoin = id => {
-    peerId = id;
+  room.onPeerJoin = pid => {
+    peerId = pid;
     lastRx = Date.now();
-    const ms = Date.now() - joinT0;
-    set('vPeer', id.slice(0, 8) + '…', 'ok');
-    set('vJoin', ms + ' ms', 'ok');
-    log('PAIR ARRIVÉ en ' + ms + ' ms — ' + id, 'g');
+    const ms = Date.now() - waitT0;     // (1) mesure honnete
+    set('vPeer', 'établie', 'ok');
+    set('vJoin', ms + ' ms', ms < 20000 ? 'ok' : 'wait');
+    log((firstJoin ? 'APPARIEMENT INITIAL' : 'REPRISE') + ' en ' + ms + ' ms', 'g');
+    firstJoin = false;
     ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = false);
   };
-  room.onPeerLeave = id => {
+
+  room.onPeerLeave = pid => {
     peerId = null;
-    set('vPeer', 'perdu', 'bad');
-    log('PAIR PARTI — ' + id, 'e');
+    waitT0 = Date.now();               // (1) nouvelle attente, nouveau chronometre
+    set('vPeer', 'pair annoncé parti', 'wait');
+    log('pair annoncé parti — on attend avant de conclure', 'w');
     ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = true);
   };
 
@@ -246,74 +262,97 @@ async function enter(id){
   pollRelays();
 }
 
-function leave(){
+function leave(silent){
   if (room){ try { room.leave(); } catch(e){} }
-  room = null; peerId = null;
-  set('vPeer', 'absent', 'dimc');
+  room = null; peerId = null; lastRx = 0;
   ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = true);
   el('bLeave').disabled = true;
-  log('salon quitté');
+  if (!silent){
+    set('vPeer', 'absente', 'dimc');
+    log('salon quitté');
+  }
 }
 
-el('bCreate').onclick = () => { const d = digits(); el('code').value = d; enter(d); };
+el('bCreate').onclick = () => { const d = digits(); el('code').value = d; firstJoin = true; enter(d); };
 el('bJoin').onclick = () => {
   const v = (el('code').value || '').replace(/\D/g, '');
   if (v.length !== 5) return log('il faut cinq chiffres', 'w');
+  firstJoin = true;
   enter(v);
 };
-el('bLeave').onclick = leave;
+el('bLeave').onclick = () => { roomId = null; leave(false); };
 
 /* ---------- reconnexion ---------- */
-// Une reconnexion, c'est quitter puis re-entrer : joinRoom est idempotent et
-// renverrait sinon la meme instance morte.
+
+let reconnecting = false;
+
 async function reconnect(why){
-  if (!roomId) return;
-  log('reconnexion (' + why + ')', 'w');
-  leave();
-  await new Promise(r => setTimeout(r, 400));
-  enter(roomId);
+  if (!roomId || reconnecting) return;
+  reconnecting = true;
+  recCount++;
+  set('vRec', String(recCount), recCount ? 'wait' : 'dimc');
+  log('RECONNEXION FORCÉE (' + why + ')', 'w');
+  const id = roomId;
+  leave(true);
+  await new Promise(r => setTimeout(r, GRACE_MS));
+  await enter(id);
+  reconnecting = false;
 }
 el('bRe').onclick = () => reconnect('manuelle');
 
+/* ---------- le chien de garde ----------
+   (2) et (3) : la liaison est vivante si et seulement si du trafic est
+   arrive recemment. On ne surveille pas pendant l'arriere-plan, ou le
+   silence est normal et ou iOS gele la page de toute facon.            */
+
+setInterval(() => {
+  // battement
+  if (aBeat && peerId){ try { aBeat.send(1); } catch(e){} }
+}, BEAT_MS);
+
+setInterval(() => {
+  if (!lastRx){ set('silence', '—', 'dimc'); return; }
+  const age = (Date.now() - lastRx) / 1000;
+  const n = el('silence');
+  n.firstChild.nodeValue = age.toFixed(0) + ' s';
+  n.className = age > DEAD_MS / 1000 ? 'bad' : age > 8 ? 'wait' : 'ok';
+
+  if (document.hidden || !room || reconnecting) return;
+  if (age * 1000 > DEAD_MS){
+    set('vPeer', 'silencieuse', 'bad');
+    reconnect('silence de ' + age.toFixed(0) + ' s');
+  }
+}, 1000);
+
 /* ---------- essais ---------- */
+
 el('bPing').onclick = async () => {
   if (!room || !peerId) return;
   try {
     const ms = await room.ping(peerId);
     set('vPing', ms + ' ms', ms < 400 ? 'ok' : 'wait');
     log('latence : ' + ms + ' ms');
-  } catch(e){ log('ping échoué : ' + e, 'e'); }
+  } catch(e){ log('ping échoué', 'e'); }
 };
 el('bBlob').onclick = () => {
   if (!aBlob) return;
-  const payload = 'x'.repeat(3000);      // l'ordre de grandeur d'un snapshot compresse
   const t = Date.now();
-  aBlob.send(payload).then(
+  aBlob.send('x'.repeat(3000)).then(
     () => log('3 ko envoyés en ' + (Date.now() - t) + ' ms'),
-    e => log('envoi échoué : ' + e, 'e')
+    () => log('envoi échoué', 'e')
   );
 };
 el('bSeq').onclick = async () => {
   if (!aSeq || !peerId) return;
   try {
     const v = await aSeq.request(null, { target: peerId, timeoutMs: 3000 });
-    log('son numéro : ' + v + ' — le mien : ' + mySeq +
-        ' → ' + (v > mySeq ? 'il pousse' : v < mySeq ? 'je pousse' : 'égalité'), 'g');
+    log('son n° ' + v + ' — le mien ' + mySeq + ' → ' +
+        (v > mySeq ? 'il pousse' : v < mySeq ? 'je pousse' : 'égalité'), 'g');
   } catch(e){ log('demande sans réponse (délai dépassé)', 'e'); }
 };
 
-/* ---------- battement de coeur ---------- */
-// Sans battement, une liaison morte reste indistinguable d'une liaison silencieuse.
-let beatNo = 0;
-setInterval(() => {
-  if (aBeat && peerId){ beatNo++; aBeat.send(beatNo); }
-  if (lastRx){
-    const age = ((Date.now() - lastRx) / 1000).toFixed(0);
-    set('vLast', 'il y a ' + age + ' s', age > 15 ? 'bad' : age > 8 ? 'wait' : 'ok');
-  }
-}, 4000);
+/* ---------- relais ---------- */
 
-/* ---------- etat des relais ---------- */
 function pollRelays(){
   if (!lib || !lib.getRelaySockets) return set('vRelay', 'non disponible', 'dimc');
   try {
@@ -327,37 +366,36 @@ function pollRelays(){
 setInterval(pollRelays, 3000);
 
 /* ---------- le gel iOS ---------- */
+
 let hidT = 0;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden){
     hidT = Date.now();
     log('=== ARRIÈRE-PLAN ===', 'w');
     if (lib && lib.pauseRelayReconnection){
-      try { lib.pauseRelayReconnection(); log('pauseRelayReconnection()'); } catch(e){}
+      try { lib.pauseRelayReconnection(); } catch(e){}
     }
   } else {
-    const away = ((Date.now() - hidT) / 1000).toFixed(1);
-    set('vHid', 'absent ' + away + ' s', 'dimc');
-    log('=== RETOUR après ' + away + ' s ===', 'w');
+    const away = (Date.now() - hidT) / 1000;
+    set('vHid', away.toFixed(1) + ' s', 'dimc');
+    log('=== RETOUR après ' + away.toFixed(1) + ' s ===', 'w');
     if (lib && lib.resumeRelayReconnection){
-      try { lib.resumeRelayReconnection(); log('resumeRelayReconnection()'); } catch(e){}
+      try { lib.resumeRelayReconnection(); } catch(e){}
     }
     pollRelays();
-    // On laisse trois secondes a la liaison pour se manifester d'elle-meme
-    // avant de conclure qu'elle est morte.
-    setTimeout(() => {
-      if (!room) return;
-      const peers = Object.keys(room.getPeers ? room.getPeers() : {});
-      log('au retour : ' + peers.length + ' pair(s) dans le salon');
-      if (peers.length === 0 && roomId) reconnect('pair perdu au retour');
-    }, 3000);
+    // Le silence accumule pendant l'absence n'est pas imputable a la
+    // liaison : on repart de zero et on laisse le chien de garde juger
+    // sur le trafic des secondes qui suivent.
+    if (room && lastRx) lastRx = Date.now();
+    log('surveillance reprise — ' + (DEAD_MS / 1000) + ' s pour se manifester');
   }
 });
 
 /* ---------- journal ---------- */
+
 el('bCopy').onclick = async () => {
-  const txt = 'Banc — ' + STRATS[strat].label + ' — ' + navigator.userAgent + '\n\n' +
-              lines.join('\n');
+  const txt = 'Banc v2 — ' + STRATS[strat].label + ' — ' + navigator.userAgent +
+              '\n\n' + lines.join('\n');
   try { await navigator.clipboard.writeText(txt); log('journal copié'); }
   catch(e){
     const ta = document.createElement('textarea');
@@ -370,5 +408,5 @@ el('bCopy').onclick = async () => {
 };
 el('bClear').onclick = () => { lines = []; logEl.innerHTML = ''; };
 
-log('banc prêt — ' + (navigator.userAgent.match(/iPhone|iPad|Mac|Windows/) || ['?'])[0]);
+log('banc v2 prêt — mort déclarée après ' + (DEAD_MS / 1000) + ' s de silence');
 </script>
