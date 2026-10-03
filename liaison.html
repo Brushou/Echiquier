@@ -1,7 +1,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Banc d'essai — liaison v2</title>
+<title>Banc d'essai — liaison v3</title>
 <style>
   :root{
     --night:#070C13; --deep:#0E1722; --moon:#93B4CC; --lantern:#F0A63C;
@@ -25,10 +25,10 @@
   .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
   .g2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
   .wide{width:100%;margin-top:9px}
+  .big{padding:16px 6px;font-size:15px}
   #code{font:18px/1 ui-monospace,Menlo,monospace;letter-spacing:.34em;
     color:var(--bone);background:#08101A;border:1px solid var(--line);border-radius:4px;
-    padding:13px 4px;text-align:center;width:100%;-moz-appearance:textfield}
-  #code::-webkit-outer-spin-button,#code::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+    padding:13px 4px;text-align:center;width:100%}
   #mine{font:400 40px/1.1 ui-monospace,Menlo,monospace;letter-spacing:.2em;
     text-align:center;color:var(--lantern);padding:10px 0 4px;min-height:54px}
   #silence{font:400 30px/1.1 ui-monospace,Menlo,monospace;text-align:center;
@@ -45,10 +45,17 @@
     padding:10px 11px;height:38vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
     white-space:pre-wrap;word-break:break-word;margin-top:4px}
   #log .e{color:var(--bad)} #log .g{color:var(--ok)} #log .w{color:var(--wait)}
+  #log .m{color:var(--lantern)}
 </style>
 
-<h1>Banc d'essai — liaison <span style="color:var(--dim);font-size:13px">v2</span></h1>
-<p class="sub">Vivacité mesurée au trafic réel, plus à la liste des pairs.</p>
+<h1>Banc d'essai — liaison <span style="color:var(--dim);font-size:13px">v3</span></h1>
+<p class="sub">Le silence est un soupçon, pas un verdict. Seul un aller-retour prouve quelque chose.</p>
+
+<div class="grp">Régime de liaison</div>
+<div class="g2">
+  <button id="mKeep" class="on">Entretenue</button>
+  <button id="mLazy">À la demande</button>
+</div>
 
 <div class="grp">Stratégie</div>
 <div class="g3">
@@ -68,6 +75,9 @@
        placeholder="•••••" style="margin-top:9px">
 <button class="wide" id="bJoin">Rejoindre ce salon</button>
 
+<div class="grp">Jouer un coup</div>
+<button class="wide big" id="bMove" disabled>Envoyer un coup et attendre l'accusé</button>
+
 <div class="grp">Silence</div>
 <div id="silence">—<small>depuis le dernier message reçu</small></div>
 
@@ -76,13 +86,15 @@
 <div class="st"><b>Relais</b><span id="vRelay" class="dimc">—</span></div>
 <div class="st"><b>Liaison</b><span id="vPeer" class="dimc">absente</span></div>
 <div class="st"><b>Dernier appariement</b><span id="vJoin" class="dimc">—</span></div>
-<div class="st"><b>Latence</b><span id="vPing" class="dimc">—</span></div>
+<div class="st"><b>Dernier coup remis en</b><span id="vMove" class="dimc">—</span></div>
+<div class="st"><b>Sondes</b><span id="vProbe" class="dimc">0 ok / 0 échec</span></div>
 <div class="st"><b>Reconnexions forcées</b><span id="vRec" class="dimc">0</span></div>
+<div class="st"><b>onJoinError</b><span id="vErr" class="dimc">0</span></div>
 <div class="st"><b>Dernière absence</b><span id="vHid" class="dimc">—</span></div>
 
 <div class="grp">Essais</div>
 <div class="g2">
-  <button id="bPing" disabled>Mesurer la latence</button>
+  <button id="bPing" disabled>Sonder maintenant</button>
   <button id="bBlob" disabled>Envoyer 3 ko</button>
   <button id="bSeq" disabled>Demander son n°</button>
   <button id="bRe" disabled>Reconnecter</button>
@@ -99,29 +111,39 @@
 'use strict';
 
 /* ======================================================================
-   BANC D'ESSAI v2
+   BANC D'ESSAI v3
 
-   Ce que la v1 a appris, et qui est corrige ici :
+   Ce que la v2 a appris, et qui est corrige ici :
 
-   1. joinT0 n'etait remis a zero qu'a l'entree dans un salon. Un pair qui
-      revenait dans un salon deja ouvert produisait un delai absurde
-      (378 325 ms) qui ne mesurait que le temps ecoule depuis le debut de
-      la seance. On chronometre desormais depuis le debut de CHAQUE
-      attente : entree dans le salon, ou perte du pair.
+   1. Le chien de garde de la v2 posait : silence = liaison morte. Faux.
+      Dans une partie d'echecs le silence est l'etat normal — l'autre
+      repose son telephone, et un appareil endormi n'emet rien. La v2 a
+      detruit six liaisons saines en six minutes. Desormais le silence
+      declenche une SONDE (un aller-retour reel sur le canal de donnees) ;
+      seul l'echec de la sonde condamne la liaison.
 
-   2. getPeers() a menti : il annoncait un pair mort depuis sept secondes.
-      La liste des pairs n'est pas une preuve de vie. Seul le trafic
-      reellement recu en est une. Toute la logique repose maintenant sur
-      lastRx.
+   2. onJoinError s'est produit trois fois, suivi chaque fois d'une
+      REPRISE reussie quelques secondes plus tard. Ce n'est pas un
+      verdict. Il devient un compteur : on ne conclut qu'apres une
+      fenetre entiere sans une seule reussite.
 
-   3. Forcer la reconnexion des la perte du pair est une erreur : la v1 a
-      montre Trystero se retablir seul. On accorde un delai de grace.
+   3. On ne voyait pas QUAND le silence commencait. Les franchissements
+      de seuil sont maintenant journalises.
+
+   4. Nouveau : deux regimes a comparer.
+      — ENTRETENUE : battement regulier, sonde, reconnexion automatique.
+      — A LA DEMANDE : rien, jusqu'au moment ou l'on a un coup a
+        transmettre. Le chiffre qui compte devient « combien de temps
+        entre mon geste et la certitude que l'autre l'a recu ».
    ====================================================================== */
 
-const BEAT_MS  = 4000;   // periode du battement de coeur
-const DEAD_MS  = 13000;  // silence au-dela duquel on declare la liaison morte
-                         // (trois battements manques, plus une marge)
-const GRACE_MS = 1500;   // temps laisse a la reconnexion avant de rejouer
+const BEAT_MS     = 4000;
+const PROBE_AFTER = 20000;   // silence avant de sonder
+const PROBE_TMO   = 6000;    // delai d'attente de la sonde
+const LOST_GRACE  = 15000;   // pair annonce parti : patience avant de conclure
+const ERR_WINDOW  = 60000;   // echecs onJoinError sans reussite avant de replier
+const MOVE_TMO    = 20000;   // delai d'attente de l'accuse de reception
+const WAIT_PEER   = 90000;   // attente max d'un pair lors d'une remise
 
 const T0 = Date.now();
 const el = id => document.getElementById(id);
@@ -148,7 +170,21 @@ function set(id, txt, cls){
   n.className = cls || '';
 }
 
-/* ---------- chargement a la demande ---------- */
+/* ---------- regime ---------- */
+
+let keepAlive = true;
+el('mKeep').onclick = () => {
+  keepAlive = true;
+  el('mKeep').classList.add('on'); el('mLazy').classList.remove('on');
+  log('régime : liaison ENTRETENUE (battement + sonde)', 'm');
+};
+el('mLazy').onclick = () => {
+  keepAlive = false;
+  el('mLazy').classList.add('on'); el('mKeep').classList.remove('on');
+  log('régime : liaison À LA DEMANDE (rien jusqu\'au prochain coup)', 'm');
+};
+
+/* ---------- chargement ---------- */
 
 const STRATS = {
   nostr:   { label: 'Nostr',      url: 'https://esm.run/trystero@0.25.2' },
@@ -193,14 +229,16 @@ async function loadLib(){
 
 const APP_ID = 'echiquier-nocturne-banc-essai';
 let room = null, roomId = null, peerId = null;
-let waitT0 = 0;        // debut de l'attente courante — remis a zero a CHAQUE attente
-let firstJoin = true;  // pour distinguer appariement initial et reprise
-let lastRx = 0;        // horodatage du dernier message REELLEMENT recu
-let recCount = 0;
-let aBeat = null, aBlob = null, aSeq = null;
+let waitT0 = 0, firstJoin = true, lastRx = 0, lostAt = 0, silenceMark = 0;
+let recCount = 0, probeOk = 0, probeKo = 0, errCount = 0, errStreakT0 = 0;
+let reconnecting = false, probing = false;
+let aBeat = null, aBlob = null, aSeq = null, aMove = null;
 let mySeq = Math.floor(Math.random() * 100);
+let peerWaiters = [];
 
 const digits = () => String(Math.floor(Math.random() * 100000)).padStart(5, '0');
+
+function touch(){ lastRx = Date.now(); silenceMark = 0; }
 
 async function enter(id){
   const L = await loadLib();
@@ -209,17 +247,25 @@ async function enter(id){
 
   roomId = id;
   el('mine').textContent = id;
-  waitT0 = Date.now();          // (1) le chronometre part ici
-  lastRx = 0;
+  waitT0 = Date.now();
+  lastRx = 0; lostAt = 0; silenceMark = 0;
   set('vPeer', 'en attente…', 'wait');
   log('entrée dans le salon ' + id + ' (' + STRATS[strat].label + ')');
 
   try {
     room = L.joinRoom({ appId: APP_ID }, id, {
       onJoinError: d => {
-        set('vPeer', 'échec WebRTC', 'bad');
-        log('onJoinError — ' + (d && d.error ? String(d.error.message || d.error) : '?'), 'e');
-        log('>>> ici l\'appli basculerait sur le mode par lien', 'w');
+        errCount++;
+        set('vErr', String(errCount), 'wait');
+        if (!errStreakT0) errStreakT0 = Date.now();
+        const streak = ((Date.now() - errStreakT0) / 1000).toFixed(0);
+        log('onJoinError (' + errCount + ', série de ' + streak + ' s) — ' +
+            (d && d.error ? String(d.error.message || d.error).slice(0, 70) : '?'), 'e');
+        /* (2) pas de verdict ici : la v2 a montre des reussites 4 s plus tard */
+        if (Date.now() - errStreakT0 > ERR_WINDOW){
+          log('>>> ' + (ERR_WINDOW / 1000) + ' s d\'échecs sans une seule réussite : ' +
+              'ICI l\'appli basculerait sur le mode par lien', 'w');
+        }
       }
     });
   } catch(e){
@@ -229,45 +275,57 @@ async function enter(id){
 
   aBeat = room.makeAction('beat');
   aBlob = room.makeAction('blob');
-  aSeq  = room.makeAction('seq', { kind: 'request', onRequest: () => mySeq });
+  aSeq  = room.makeAction('seq',  { kind: 'request', onRequest: () => mySeq });
+  aMove = room.makeAction('move', { kind: 'request', onRequest: d => {
+    touch();
+    log('COUP REÇU (' + (typeof d === 'string' ? d.length : 0) +
+        ' octets) — j\'accuse réception', 'm');
+    return 'ok';
+  }});
 
-  aBeat.onMessage = n => { lastRx = Date.now(); };
+  aBeat.onMessage = () => { touch(); };
   aBlob.onMessage = d => {
-    lastRx = Date.now();
-    const size = typeof d === 'string' ? d.length : (d.byteLength || 0);
-    log('charge reçue : ' + size + ' octets', 'g');
+    touch();
+    log('charge reçue : ' + (typeof d === 'string' ? d.length : 0) + ' octets', 'g');
   };
 
   room.onPeerJoin = pid => {
     peerId = pid;
-    lastRx = Date.now();
-    const ms = Date.now() - waitT0;     // (1) mesure honnete
+    touch();
+    lostAt = 0;
+    errStreakT0 = 0;                    /* (2) une reussite annule la serie */
+    const ms = Date.now() - waitT0;
     set('vPeer', 'établie', 'ok');
     set('vJoin', ms + ' ms', ms < 20000 ? 'ok' : 'wait');
     log((firstJoin ? 'APPARIEMENT INITIAL' : 'REPRISE') + ' en ' + ms + ' ms', 'g');
     firstJoin = false;
     ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = false);
+    const w = peerWaiters; peerWaiters = [];
+    w.forEach(fn => fn());
   };
 
-  room.onPeerLeave = pid => {
+  room.onPeerLeave = () => {
     peerId = null;
-    waitT0 = Date.now();               // (1) nouvelle attente, nouveau chronometre
+    lostAt = Date.now();
+    waitT0 = Date.now();
     set('vPeer', 'pair annoncé parti', 'wait');
-    log('pair annoncé parti — on attend avant de conclure', 'w');
+    log('pair annoncé parti — ' + (LOST_GRACE / 1000) + ' s de grâce', 'w');
     ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = true);
   };
 
   el('bLeave').disabled = false;
   el('bRe').disabled = false;
+  el('bMove').disabled = false;
   pollRelays();
 }
 
 function leave(silent){
   if (room){ try { room.leave(); } catch(e){} }
-  room = null; peerId = null; lastRx = 0;
+  room = null; peerId = null; lastRx = 0; lostAt = 0;
   ['bPing','bBlob','bSeq'].forEach(b => el(b).disabled = true);
   el('bLeave').disabled = true;
   if (!silent){
+    el('bMove').disabled = true;
     set('vPeer', 'absente', 'dimc');
     log('salon quitté');
   }
@@ -284,56 +342,133 @@ el('bLeave').onclick = () => { roomId = null; leave(false); };
 
 /* ---------- reconnexion ---------- */
 
-let reconnecting = false;
-
 async function reconnect(why){
   if (!roomId || reconnecting) return;
   reconnecting = true;
   recCount++;
-  set('vRec', String(recCount), recCount ? 'wait' : 'dimc');
+  set('vRec', String(recCount), 'wait');
   log('RECONNEXION FORCÉE (' + why + ')', 'w');
   const id = roomId;
   leave(true);
-  await new Promise(r => setTimeout(r, GRACE_MS));
+  await new Promise(r => setTimeout(r, 1200));
   await enter(id);
   reconnecting = false;
 }
 el('bRe').onclick = () => reconnect('manuelle');
 
-/* ---------- le chien de garde ----------
-   (2) et (3) : la liaison est vivante si et seulement si du trafic est
-   arrive recemment. On ne surveille pas pendant l'arriere-plan, ou le
-   silence est normal et ou iOS gele la page de toute facon.            */
+/* ---------- (1) la sonde ----------
+   Un aller-retour reel sur le canal de donnees. C'est la seule preuve de
+   vie qui vaille : ni la liste des pairs, ni le silence n'en sont une. */
+
+async function probe(why){
+  if (probing || !room || !peerId) return false;
+  probing = true;
+  log('sonde (' + why + ')…');
+  const t = Date.now();
+  try {
+    const ms = await Promise.race([
+      room.ping(peerId),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('tmo')), PROBE_TMO))
+    ]);
+    probeOk++;
+    set('vProbe', probeOk + ' ok / ' + probeKo + ' échec', 'ok');
+    log('sonde OK en ' + (typeof ms === 'number' ? ms : Date.now() - t) +
+        ' ms — liaison vivante, silence innocent', 'g');
+    touch();
+    probing = false;
+    return true;
+  } catch(e){
+    probeKo++;
+    set('vProbe', probeOk + ' ok / ' + probeKo + ' échec', 'bad');
+    log('sonde ÉCHOUÉE après ' + (Date.now() - t) + ' ms', 'e');
+    probing = false;
+    return false;
+  }
+}
+
+/* ---------- battement ---------- */
 
 setInterval(() => {
-  // battement
-  if (aBeat && peerId){ try { aBeat.send(1); } catch(e){} }
+  if (keepAlive && aBeat && peerId){ try { aBeat.send(1); } catch(e){} }
 }, BEAT_MS);
 
-setInterval(() => {
-  if (!lastRx){ set('silence', '—', 'dimc'); return; }
-  const age = (Date.now() - lastRx) / 1000;
-  const n = el('silence');
-  n.firstChild.nodeValue = age.toFixed(0) + ' s';
-  n.className = age > DEAD_MS / 1000 ? 'bad' : age > 8 ? 'wait' : 'ok';
+/* ---------- surveillance ---------- */
 
-  if (document.hidden || !room || reconnecting) return;
-  if (age * 1000 > DEAD_MS){
-    set('vPeer', 'silencieuse', 'bad');
-    reconnect('silence de ' + age.toFixed(0) + ' s');
+setInterval(async () => {
+  const n = el('silence');
+  if (!lastRx){ n.firstChild.nodeValue = '—'; n.className = 'dimc'; }
+  else {
+    const age = (Date.now() - lastRx) / 1000;
+    n.firstChild.nodeValue = age.toFixed(0) + ' s';
+    n.className = age > 20 ? 'bad' : age > 10 ? 'wait' : 'ok';
+    /* (3) on voit enfin quand le silence s'installe */
+    [10, 20, 30, 60, 120, 300].forEach(s => {
+      if (age >= s && silenceMark < s){ silenceMark = s; log('silence : ' + s + ' s'); }
+    });
+  }
+
+  if (document.hidden || !room || reconnecting || probing) return;
+
+  /* pair annonce parti : patienter, la v2 a montre des retablissements seuls */
+  if (!peerId && lostAt && Date.now() - lostAt > LOST_GRACE){
+    return reconnect('pair absent depuis ' + (LOST_GRACE / 1000) + ' s');
+  }
+
+  /* (1) silence prolonge : sonder, pas condamner — regime entretenu seulement */
+  if (keepAlive && peerId && lastRx && Date.now() - lastRx > PROBE_AFTER){
+    const alive = await probe('silence de ' + ((Date.now() - lastRx) / 1000).toFixed(0) + ' s');
+    if (!alive) reconnect('sonde échouée');
   }
 }, 1000);
 
+/* ---------- (4) remettre un coup ---------- */
+
+function awaitPeer(ms){
+  if (peerId) return Promise.resolve(true);
+  return new Promise(res => {
+    const fn = () => { clearTimeout(to); res(true); };
+    const to = setTimeout(() => {
+      peerWaiters = peerWaiters.filter(f => f !== fn);
+      res(false);
+    }, ms);
+    peerWaiters.push(fn);
+  });
+}
+
+el('bMove').onclick = async () => {
+  if (!roomId) return;
+  el('bMove').disabled = true;
+  const t0 = Date.now();
+  log('--- COUP JOUÉ : je veux la certitude qu\'il est arrivé ---', 'm');
+
+  try {
+    if (!peerId){
+      log('pas de pair : rétablissement de la liaison d\'abord');
+      if (!reconnecting) await reconnect('un coup à remettre');
+      const got = await awaitPeer(WAIT_PEER);
+      if (!got){
+        log('COUP NON REMIS — aucun pair après ' + (WAIT_PEER / 1000) + ' s', 'e');
+        set('vMove', 'échec', 'bad');
+        el('bMove').disabled = false;
+        return;
+      }
+    }
+    const payload = 'x'.repeat(3000);   /* ordre de grandeur d'un snapshot compresse */
+    await aMove.request(payload, { target: peerId, timeoutMs: MOVE_TMO });
+    const ms = Date.now() - t0;
+    set('vMove', ms + ' ms', ms < 5000 ? 'ok' : ms < 20000 ? 'wait' : 'bad');
+    log('COUP REMIS ET ACCUSÉ en ' + ms + ' ms', 'g');
+    touch();
+  } catch(e){
+    set('vMove', 'échec', 'bad');
+    log('COUP NON REMIS après ' + (Date.now() - t0) + ' ms', 'e');
+  }
+  el('bMove').disabled = false;
+};
+
 /* ---------- essais ---------- */
 
-el('bPing').onclick = async () => {
-  if (!room || !peerId) return;
-  try {
-    const ms = await room.ping(peerId);
-    set('vPing', ms + ' ms', ms < 400 ? 'ok' : 'wait');
-    log('latence : ' + ms + ' ms');
-  } catch(e){ log('ping échoué', 'e'); }
-};
+el('bPing').onclick = () => probe('manuelle');
 el('bBlob').onclick = () => {
   if (!aBlob) return;
   const t = Date.now();
@@ -348,7 +483,7 @@ el('bSeq').onclick = async () => {
     const v = await aSeq.request(null, { target: peerId, timeoutMs: 3000 });
     log('son n° ' + v + ' — le mien ' + mySeq + ' → ' +
         (v > mySeq ? 'il pousse' : v < mySeq ? 'je pousse' : 'égalité'), 'g');
-  } catch(e){ log('demande sans réponse (délai dépassé)', 'e'); }
+  } catch(e){ log('demande sans réponse', 'e'); }
 };
 
 /* ---------- relais ---------- */
@@ -372,30 +507,26 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden){
     hidT = Date.now();
     log('=== ARRIÈRE-PLAN ===', 'w');
-    if (lib && lib.pauseRelayReconnection){
-      try { lib.pauseRelayReconnection(); } catch(e){}
-    }
+    if (lib && lib.pauseRelayReconnection){ try { lib.pauseRelayReconnection(); } catch(e){} }
   } else {
     const away = (Date.now() - hidT) / 1000;
     set('vHid', away.toFixed(1) + ' s', 'dimc');
     log('=== RETOUR après ' + away.toFixed(1) + ' s ===', 'w');
-    if (lib && lib.resumeRelayReconnection){
-      try { lib.resumeRelayReconnection(); } catch(e){}
-    }
+    if (lib && lib.resumeRelayReconnection){ try { lib.resumeRelayReconnection(); } catch(e){} }
     pollRelays();
-    // Le silence accumule pendant l'absence n'est pas imputable a la
-    // liaison : on repart de zero et on laisse le chien de garde juger
-    // sur le trafic des secondes qui suivent.
-    if (room && lastRx) lastRx = Date.now();
-    log('surveillance reprise — ' + (DEAD_MS / 1000) + ' s pour se manifester');
+    if (room && lastRx) touch();
+    if (lostAt) lostAt = Date.now();
+    /* Au retour, sonder tout de suite : c'est le moment ou l'on veut savoir. */
+    if (room && peerId) setTimeout(() => probe('retour d\'arrière-plan'), 800);
   }
 });
 
 /* ---------- journal ---------- */
 
 el('bCopy').onclick = async () => {
-  const txt = 'Banc v2 — ' + STRATS[strat].label + ' — ' + navigator.userAgent +
-              '\n\n' + lines.join('\n');
+  const txt = 'Banc v3 — ' + STRATS[strat].label + ' — régime ' +
+              (keepAlive ? 'entretenu' : 'à la demande') + '\n' +
+              navigator.userAgent + '\n\n' + lines.join('\n');
   try { await navigator.clipboard.writeText(txt); log('journal copié'); }
   catch(e){
     const ta = document.createElement('textarea');
@@ -408,5 +539,5 @@ el('bCopy').onclick = async () => {
 };
 el('bClear').onclick = () => { lines = []; logEl.innerHTML = ''; };
 
-log('banc v2 prêt — mort déclarée après ' + (DEAD_MS / 1000) + ' s de silence');
+log('banc v3 prêt — sonde après ' + (PROBE_AFTER / 1000) + ' s de silence');
 </script>
